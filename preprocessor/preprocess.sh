@@ -12,6 +12,9 @@
 identifierRegex="abcdefghijklmnopqrstuvwxyz_ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 identifierRegex="[$identifierRegex][${identifierRegex}0123456789]*"
 
+# Holds a mapping of hex digit to equivalent bits, for converting to binary.
+declare -A hexToBitsMap
+
 # Used to hold the list of overlays, with info about each.
 declare -A overlayList
 # Used to hold the addresses at which the current overlay changes.
@@ -125,6 +128,158 @@ addProgramLine() {
 
 # -------- END: PROGRAM TEXT HANDLING --------
 
+# -------- START: NUMBER HANDLING --------
+
+# Initialize the hexToBitsMap global variable.
+initHexToBitsMap() {
+	local bits hex
+	for bits in {0,1}{0,1}{0,1}{0,1} ; do
+		printf -v hex "%X" $(( 2#$bits ))
+		hexToBitsMap[$hex]=$bits
+	done
+}
+initHexToBitsMap
+unset initHexToBitsMap
+
+# Parse, check and then format a number according to its parameter type.
+# On success, returns 0 with result in the $formattedNumber variable.
+# On error, returns 1.
+# parseAndFormatNumber <type> <number>
+parseAndFormatNumber() {
+	local type typeLen value="$2" sign
+	if ! [[ "$1" =~ ^(bits|u?int)([0-9]+)$ ]]; then
+		printf >&2 "Error: Invalid number type: %s\n" "$1"
+		return 1
+	fi
+	type=${BASH_REMATCH[1]}
+	typeLen=${BASH_REMATCH[2]}
+	if [[ "$value" =~ ^([+-]?)0[xX](.*)$ ]]; then
+		# Explicitly hexadecimal.
+		sign=${BASH_REMATCH[1]}
+		if ! [[ "${BASH_REMATCH[2]}" =~ ^([0123456789abcdefABCDEF]+)$ ]]; then
+			printf >&2 "Error: Invalid hexadecimal value: %s\n" "$value"
+			return 1
+		fi
+		value=$(( 16#${BASH_REMATCH[1]} ))
+	elif [[ "$value" =~ ^([+-]?)0[bB](.*)$ ]]; then
+		# Explicitly binary.
+		sign=${BASH_REMATCH[1]}
+		if ! [[ "${BASH_REMATCH[2]}" =~ ^([01]+)("..."([01]*))?$ ]]; then
+			printf >&2 "Error: Invalid binary value: %s\n" "$value"
+			return 1
+		fi
+		if [ $(( ${#BASH_REMATCH[1]} + ${#BASH_REMATCH[3]} )) -gt $typeLen ]; then
+			printf >&2 "Error: Binary value too long for %s: %s\n" "$1" "$value"
+			return 1
+		fi
+		value=${BASH_REMATCH[1]}
+		if [ "${BASH_REMATCH[2]}" != "" ]; then
+			printf -v value "%s%*s" "$value" \
+				$(( $typeLen - ${#value} )) "${BASH_REMATCH[3]}"
+			value=${value// /0}
+		fi
+		# If the value is negative zero, drop the negativity.
+		[ "$sign" = "-" ] && [[ "$value" =~ ^0+$ ]] && sign=
+		if [ "$type" = "bits" -a "$sign" != "-" ]; then
+			# We have the format we want, so skip re-encoding it.
+			printf -v value "%*s" "$typeLen" "$value"
+			formattedNumber=${value// /0}
+			return 0
+		fi
+		value=$(( 2#$value ))
+	elif [ ${#value} -eq $typeLen ] && [[ "$value" =~ ^[01]+$ ]]; then
+		# Binary with exact length.
+		if [ "$type" = "bits" ]; then
+			# We already have the format we want, so skip re-encoding it.
+			formattedNumber=$value
+			return 0
+		fi
+		value=$(( 2#$value ))
+	else
+		# No other recognized format, so try decimal.
+		if ! [[ "$value" =~ ^([+-]?)([0123456789]+)$ ]]; then
+			printf >&2 "Error: Invalid number: %s\n" "$value"
+			return 1
+		fi
+		sign=${BASH_REMATCH[1]}
+		value=$(( 10#${BASH_REMATCH[2]} ))
+	fi
+	# If the value is negative zero, drop the negativity.
+	[ "$sign" = "-" -a $value -eq 0 ] && sign=
+	case "$type" in
+		uint)
+			if [ "$sign" = "-" ]; then
+				printf >&2 "Error: Negative value not allowed for %s\n" "$1"
+				return 1
+			fi
+			if [ $value -ge $(( 2**$typeLen )) ]; then
+				printf >&2 "Error: Value too large for %s: %s\n" "$1" "$value"
+				return 1
+			fi
+			formattedNumber=$value
+			return 0
+			;;
+		int)
+			local op=-ge
+			[ "$sign" = "-" ] && op=-gt
+			if [ $value $op $(( 2**($typeLen - 1) )) ]; then
+				printf >&2 "Error: Value out of range for %s: %s%s\n" \
+					"$1" "$sign" "$value"
+				return 1
+			fi
+			if [ "$sign" = "-" ]; then
+				formattedNumber=$(( 0 - $value ))
+			else
+				formattedNumber=$value
+			fi
+			return 0
+			;;
+		bits)
+			local op=-ge maxVal=$(( 2**$typeLen ))
+			if [ "$sign" = "-" ]; then
+				op=-gt
+				maxVal=$(( $maxVal / 2 ))
+			fi
+			if [ $value $op $maxVal ]; then
+				printf >&2 "Error: Value out of range for %s: %s%s\n" \
+					"$1" "$sign" "$value"
+				return 1
+			fi
+			if [ "$sign" = "-" ]; then
+				value=$(( $maxVal * 2 - $value ))
+			fi
+			# There's no built-in way to convert to a binary string,
+			# so we have to do it ourselves.
+			printf -v value "%X" "$value"
+			op=
+			while [ "$value" != "" ]; do
+				op+=${hexToBitsMap[${value:0:1}]}
+				value=${value:1}
+			done
+			# We should now have the result bits, with up to 3 extra 0-bits.
+			while [ ${#op} -gt $typeLen -a "${op:0:1}" = "0" ]; do
+				op=${op:1}
+			done
+			if [ ${#op} -gt $typeLen ]; then
+				printf >&2 "Error: Result has too many bits for %s: %s\n" \
+					"$1" "$op"
+				return 1
+			fi
+			# We could have fewer 0-bits than we need, so add the rest.
+			printf -v op "%*s" "$typeLen" "$op"
+			formattedNumber=${op// /0}
+			return 0
+			;;
+		*)
+			printf >&2 "Internal error: Unknown type: '%s' from '%s'\n" \
+				"$type" "$1"
+			exit 1
+			;;
+	esac
+}
+
+# -------- END: NUMBER HANDLING --------
+
 # -------- START: PASS 1 --------
 
 endCurrentOverlay() {
@@ -148,7 +303,7 @@ runPass1() {
 	local address=0
 	local currentOverlay=
 	local labelRegex="^($identifierRegex)[[:space:]]*:[[:space:]]*(.*)\$"
-	local line comment tmp
+	local line comment tmp formattedNumber
 	while IFS= read -r line
 	do
 		line_no=$(($line_no + 1))
@@ -212,13 +367,29 @@ runPass1() {
 				address=$(($address + 1))
 				;;
 			NILLIST)
-				if ! [[ "$line" =~ ^"NILLIST "([0-9]+)$ ]]; then
-					printf >&2 "Error: %s at line %s:\n%s\n" \
-						"Missing or invalid NILLIST count" "$line_no" "$line"
+				if ! [[ "$line" =~ ^"NILLIST "([^[:space:]]+)$ ]]; then
+					printf >&2 "Error: %s for NILLIST at line %s:\n%s\n" \
+						"Missing or invalid argument" "$line_no" "$line"
 					return 1
 				fi
-				tmp="${BASH_REMATCH[1]}"
-				addProgramLine "$line" "$comment"
+				if ! parseAndFormatNumber int32 "${BASH_REMATCH[1]}"
+				then
+					printf >&2 "Error: %s for NILLIST at line %s:\n%s\n" \
+						"Invalid count" "$line_no" "$line"
+					return 1
+				fi
+				tmp=$formattedNumber
+				if [ $tmp -lt 0 ]; then
+					printf >&2 "Error: %s for NILLIST at line %s:\n%s\n" \
+						"Count cannot be negative" "$line_no" "$line"
+					return 1
+				fi
+				if [ $tmp -eq 0 ]; then
+					# Senbir's NILLIST always adds at least one NIL.
+					addProgramLine "// NILLIST $tmp" "${comment:1}"
+				else
+					addProgramLine "NILLIST $tmp" "$comment"
+				fi
 				address=$(($address + $tmp))
 				;;
 			OVERLAY)
@@ -410,6 +581,13 @@ runPass2() {
 				address=$(($address + 1))
 				;;
 			NILLIST)
+				# Match the count to update the address. The count has already
+				# been parsed, checked and formatted during pass 1.
+				if ! [[ "$line" =~ ^"NILLIST "([0-9]+)$ ]]; then
+					printf >&2 "Internal error: %s at line %s:\n%s\n" \
+						"Bad NILLIST" "$line_no" "$line"
+					return 1
+				fi
 				tmp="${BASH_REMATCH[1]}"
 				addProgramLine "$line" "$comment"
 				address=$(($address + $tmp))
