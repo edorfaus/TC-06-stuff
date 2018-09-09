@@ -1,0 +1,64 @@
+This file contains information about how Senbir's assembler parses the
+instructions, in a summary format that I can more easily use to match it.
+
+This is as of Senbir commit 38fdb004, in the PlayerLook.cs file.
+
+Note: The * in [sp //* *] cannot have any <sp //*> entry or it will fail by
+	considering the last one to be the start of the comment, not the first.
+
+Note: the various int formats are all parsed by the int.Parse method.
+	uint means negative values won't work there.
+	The number suffix means the value must fit in that many bits.
+
+Note: int.Parse accepts this form of number: [ws][sign]digits[ws]
+	which corresponds to the regex ^[[:space:]]*[+-]?[0-9]+[[:space:]]*$
+	so it only parses decimal numbers, not hex or anything else.
+
+----
+
+DATAC* sp bits32 [sp //* *]
+	must be 32 bits as-is, no parsing is done
+
+NILLIST* sp int32 [sp //* *]
+	always adds at least one NIL even if the argument is < 1
+
+NIL* *
+
+HLT* [sp uint28] [sp //* *]
+
+MOVI* sp uint4 sp uint24 [sp //* *]
+
+MOVO* sp uint4 sp uint24 [sp //* *]
+
+JMP* sp uint2 sp uint24 [sp //* *]
+
+SETDATA* sp uint4 sp uint2 sp varying [sp uint4] [sp *] [sp //* *]
+	varying: depends on second argument (flag)
+		if flag=0 then bits22 (added as-is, no padding)
+		if flag=1/2 then int22 except absolute value must fit in uint21, as
+			it uses the sign of the value to set the direction bit (0 if neg)
+		if flag=3 then uint4 and the next arg is used if present
+	[sp uint4] is ignored (and not int-parsed) unless flag=3
+
+GETDATA* sp uint4 sp uint2 sp varying [sp //* *]
+	varying: depends on second argument (flag)
+		if flag=0 then bits22 (added as-is, no padding)
+		if flag=1/2 then int22 except absolute value must fit in uint21, as
+			it uses the sign of the value to set the direction bit (0 if neg)
+		if flag=3 then uint4
+
+SET* sp uint4 sp uint2 sp bits8|uint8 [sp //* *]
+	bits8 is only recognized by length==8, and then added as-is(no [01]* check)
+
+IFJMP* sp uint2 sp uint24 sp uint2 [sp //* *]
+
+PMOV* sp uint4 sp uint4 sp uint5 sp uint5 sp uint5 sp bits1 [sp //* *]
+	bits1 should be one bit, but is added as-is, with only total length checked
+
+MATH* sp uint4 sp uint4 sp uint4 [sp bits16] [sp //* *]
+	if given, bits16 are added as-is with no checks
+
+UTL* *
+	always errors out ("not yet implemented")
+
+OFST* sp uint24 [sp //* *]
