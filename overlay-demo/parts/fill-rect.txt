@@ -1,0 +1,21 @@
+JMP 0 4
+DATAC 10000100100000000000000000000000 // Start pixel top-left
+DATAC 00000000000000000000000000001111 // End X position
+DATAC <INSERT HERE> // Disk address of hline proc
+MOVI 10 1 // R10=ram[1] : load start pixel top-left
+MOVI 11 2 // R11=ram[2] : load end X position
+MOVI 2 3 // R2=ram[3] : load disk address of hline proc
+JMP 0 8 // jump to the rest of the initialization
+MATH 15 12 0 // R12++ : increment Y position
+PMOV 12 10 29 31 23 0 // R10[posY]=R12[posY] : copy new Y position
+MATH 12 2 5 // R2=R12 : copy Y position for comparison
+MOVI 3 18 // R3=ram[18] : load end Y position
+IFJMP 1 0 3 // if P2<P3 (curY < maxY) then continue loop
+MOVI 2 19 // R2=ram[19] : load disk address of next part of main
+JMP 3 9 // Jump to overlay loader : load and run the next part of main
+MATH 12 12 1 // R12=0 : clear value for insertion of Y position bits
+PMOV 10 12 6 8 23 1 // R12[posY]=R10[posY] : copy start Y position
+JMP 3 9 // Jump to overlay loader : load and run the hline proc
+DATAC 00000000000000000000000000000111 // End Y position
+DATAC <INSERT HERE> // Address of next part of main
+

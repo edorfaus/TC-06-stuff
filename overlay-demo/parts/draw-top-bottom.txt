@@ -1,0 +1,17 @@
+JMP 0 4
+DATAC 11000000000000000000000000000000 // Start pixel top-left
+DATAC 00000000000000000000000000010000 // End X position
+DATAC <INSERT HERE> // Disk address of hline proc
+MOVI 10 1 // R10=ram[1] : load start pixel top-left
+MOVI 11 2 // R11=ram[2] : load end X position
+MOVI 2 3 // R2=ram[3] : load disk address of hline proc
+JMP 3 9 // Jump to overlay loader : load and run the hline proc
+MATH 10 2 5 // R2=R10 : previous start pixel
+MOVI 10 14 // R10=ram[14] : load start pixel bottom-left
+MATH 10 3 5 // R3=R10 : new start pixel
+IFJMP 1 0 1 // if R2!=R3 (old start pixel is not same as new) then run again
+MOVI 2 15 // R2=ram[15] : load disk address of next part of main
+JMP 3 9 // Jump to overlay loader : load and run the next part of main
+DATAC 11000011100000000000000000000000 // Start pixel bottom-left
+DATAC <INSERT HERE> // Address of next part of main
+

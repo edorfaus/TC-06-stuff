@@ -1,0 +1,17 @@
+MOVI 1 11 // R1=ram[11] : copy start pixel pos/color for I
+MOVI 3 13 // R3=ram[13] : copy end Y position
+JMP 1 15 // jump to drawing routine
+MATH 1 2 5 // R2=R1 : copy current pixel pos/color
+MOVI 3 12 // R3=ram[12] : copy start pixel pos/color for N
+IFJMP 0 4 2 // if R2>R3 (cur pix > N start) then second line is done already
+MATH 3 1 5 // R1=R3 : copy start pixel pos/color for N
+MOVI 3 13 // R3=ram[13] : copy end Y position
+JMP 1 15 // jump to drawing routine
+MOVI 2 14 // R2=ram[14] : load disk address of next part of main
+JMP 3 9 // Jump to overlay loader : load and run the next part of main
+DATAC 01011100100000000000000000000000 // Start pixel for I
+DATAC 01100100100000000000000000000000 // Start pixel for N, top-left
+DATAC 00000000000000000000000000000111 // end Y position
+DATAC <INSERT HERE> // Address of next part of main
+//
+// Note that this proc uses code from a previously loaded part.

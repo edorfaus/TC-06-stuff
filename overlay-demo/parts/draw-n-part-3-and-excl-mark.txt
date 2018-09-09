@@ -1,0 +1,15 @@
+MOVI 1 10 // R1=ram[10] : copy start pixel pos/color for N line
+MOVI 3 11 // R3=ram[11] : copy end Y position
+JMP 1 15 // jump to drawing routine
+MOVI 3 11 // R3=ram[11] : copy end Y position
+IFJMP 0 4 1 // if R2!=R3 then second line is done already
+MOVI 1 12 // R1=ram[12] : copy start pixel pos/color for excl. mark
+SET 3 3 00000101 // R3[3]=5 : set end Y position
+JMP 1 15 // jump to drawing routine
+SETDATA 0 0 0111101100000000000000 // draw bottom point for excl. mark
+HLT // We're done drawing the win screen, so halt here
+DATAC 01110000100000000000000000000000 // Start pixel, top of N line
+DATAC 00000000000000000000000000000111 // end Y position, bottom of N
+DATAC 01111000100000000000000000000000 // Start pixel, top of excl. mark
+//
+// Note that this proc uses code from a previously loaded part.

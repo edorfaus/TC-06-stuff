@@ -1,0 +1,22 @@
+MOVI 1 12 // R1=ram[12] : copy start pixel pos/color
+MOVI 3 13 // R3=ram[13] : copy end Y position
+JMP 1 15 // jump to drawing routine
+MOVI 3 13 // R3=ram[13] : copy end Y position
+IFJMP 0 4 1 // if R2!=R3 then second line is done already
+SET 1 0 01001010 // R1[0]=.. : increment X position, keep rest
+SET 3 3 00000111 // R3[3]=7 : update end Y position
+JMP 1 15 // jump to drawing routine
+SETDATA 0 0 0100110110000000000000 // draw top pixel for center of W
+SETDATA 0 0 0100111000000000000000 // draw bottom pixel for center of W
+MOVI 2 14 // R2=ram[14] : load disk address of next part of main
+JMP 3 9 // Jump to overlay loader : load and run the next part of main
+DATAC 01000100100000000000000000000000 // Start pixel, top-left
+DATAC 00000000000000000000000000000100 // end Y position, middle of W
+DATAC <INSERT HERE> // Address of next part of main
+MATH 2 2 1 // R2=0 : clear R2 so start pos will be the only thing in it
+PMOV 1 2 6 8 23 1 // R2[posY]=R1[posY] : copy start position
+SETDATA 0 3 1 // write current pixel to screen
+MATH 15 2 0 // R2++ : increment Y
+PMOV 2 1 29 31 23 0 // R1[posY]=R2[posY] : copy next Y position
+IFJMP 2 3 3 // if R2<R3 (curY < endY) then continue loop
+JMP 1 3 // jump back to resume drawing commands with next line

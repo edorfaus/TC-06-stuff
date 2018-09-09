@@ -1,0 +1,27 @@
+SET 15 3 1 // R15=1 : for doing various math
+SET 14 1 10000000 // R14[8:8]=1 : 1-value for incrementing Y
+MOVI 10 26 // R10=ram[26] : this instruction is used as data
+MOVI 10 18 // R10=ram[18] : load the next word of image data : self-modified
+MATH 2 2 1 // R2=0 : initialize loop counter
+PMOV 15 3 0 31 4 0 // R3=16 : max value that ends the loop, pixels per word
+PMOV 10 1 0 1 0 0 // R1[0:1]=R10[0:1] : copy current color into R1
+SETDATA 0 3 1 // write(screen, R1) : write pixel to screen
+MATH 14 1 0 // R1+=R14 : increment Y position in R1 (overflows to X position)
+PMOV 10 10 0 31 2 0 // R10<<2 : move next pixel into place
+MATH 15 2 0 // R2++ : add one to the loop counter
+IFJMP 2 5 3 // loop: if R2 < R3 then jump back 5 instructions
+MOVI 2 3 // R2=ram[3] : load MOVI instruction at address 3 into R2
+MATH 15 2 0 // R2++ : increment address of MOVI instruction
+MOVO 2 3 // ram[3]=R2 : overwrite MOVI instruction at address 3
+MOVI 3 2 // R3=ram[2] : load instruction at address 2 into register 3
+IFJMP 1 3 3 // loop: if R2 < R3 then jump to instruction at address 3
+HLT // end of program - image is being displayed
+DATAC 11111111111111111101010110101011 // This spells out "WON" instead
+DATAC 11101010010101111110100101101011 // of the default "WIN!"
+DATAC 11101010010101111101010110101011
+DATAC 11101010101010111110010101011011
+DATAC 11011010101001111110010101011011
+DATAC 11101010101010111101010101010111
+DATAC 11100101101010111110101001011011
+DATAC 11010101010101111111111111111111
+

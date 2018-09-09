@@ -1,0 +1,18 @@
+MATH 11 3 5 // R3=R11 : copy end X position
+MATH 10 1 5 // R1=R10 : copy start pixel pos/color
+MATH 2 2 1 // R2=0 : clear R2 so start pos will be the only thing in it
+PMOV 1 2 2 5 26 1 // R2[posX]=R1[posX] : copy start position
+SETDATA 0 3 1 // write current pixel to screen
+MATH 15 2 0 // R2++ : increment X
+PMOV 2 1 28 31 26 0 // R1[posX]=R2[posX] : copy next X position
+IFJMP 2 3 3 // if R2<R3 (curX < endX) then continue loop
+
+// subroutine: draw horizontal line
+
+// R15: static: 1 (assumed to already be this value)
+// R10: input: start pixel and color
+// R11: input: end X position (not inclusive - will not be drawn)
+// R1: temp: current pixel data to send to screen
+// R2: temp: loop counter (current X position)
+// R3: temp: loop end (last X position)
+

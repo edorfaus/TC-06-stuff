@@ -1,0 +1,23 @@
+SET 15 3 1 // R15=1
+SET 14 1 10000000 // R14=0x00800000 : 1-value for Y++
+MOVI 10 22 // R10=ram[22] | load the word after the image data into register 10
+MOVI 10 18 // R10=ram[18] | load a word of image data into register 10
+MATH 2 2 1 // R2=0 | initialize loop counter to 0
+PMOV 15 3 0 31 5 0 // R3=32 | max value that ends the loop - pixels per word
+PMOV 10 1 0 0 0 0 // R1%=R10% | copy current color into screen data register
+SETDATA 0 3 1 // write pixel to screen
+MATH 14 1 0 // R1+=R14 | add Y position to screen data register
+PMOV 10 10 0 31 1 0 // R10<<=1 | shift R10 over to move next pixel into place
+MATH 15 2 0 // R2++ | add one to the loop counter
+IFJMP 2 5 3 // loop condition: if R2 < R3 then jump back 5 instructions
+MOVI 2 3 // R2=ram[3] : load instruction at address 3 into register 2
+MATH 15 2 0 // R2++ : increment address of MOVI instruction
+MOVO 2 3 // ram[3]=R2 : overwrite MOVI instruction
+MOVI 3 2 // R3=ram[2] : load MOVI instruction into register 3
+IFJMP 1 3 3 // if R2 < R3 then jump to instruction at address 3
+HLT // end of program - image is being displayed
+DATAC 00000000000111111001010111101010
+DATAC 10000000000000000101000110111111
+DATAC 01010001000000000100000010101110
+DATAC 01010001000101010001011100000000
+

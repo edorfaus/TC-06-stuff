@@ -1,0 +1,230 @@
+// Disk image program - combination of various procs, with addresses inserted
+//
+// main 0: draw top and bottom border
+// start address: 0 = 00000000000000000000000000000000
+// length: 16
+DATAC 00000000000000000000000000010000 // last address: 16
+JMP 0 4
+DATAC 11000000000000000000000000000000 // Start pixel top-left
+DATAC 00000000000000000000000000010000 // End X position
+DATAC 00000000000000000000000000011000 // Disk address of hline proc
+MOVI 10 1 // R10=ram[1] : load start pixel top-left
+MOVI 11 2 // R11=ram[2] : load end X position
+MOVI 2 3 // R2=ram[3] : load disk address of hline proc
+JMP 3 9 // Jump to overlay loader : load and run the hline proc
+MATH 10 2 5 // R2=R10 : previous start pixel
+MOVI 10 14 // R10=ram[14] : load start pixel bottom-left
+MATH 10 3 5 // R3=R10 : new start pixel
+IFJMP 1 0 1 // if R2!=R3 (old start pixel is not same as new) then run again
+MOVI 2 15 // R2=ram[15] : load disk address of next part of main
+JMP 3 9 // Jump to overlay loader : load and run the next part of main
+DATAC 11000011100000000000000000000000 // Start pixel bottom-left
+DATAC 00000000000000000000000001001000 // Address of next part of main
+// last address: 16
+NILLIST 7 // alignment for the next overlay part
+//
+// subproc: draw horizontal line
+// inputs:
+//   R10: start pixel and color
+//   R11: end X position (not inclusive - will not be drawn)
+// overwrites: R1, R2, R3
+// start address: 24 = 00000000000000000000000000011000
+// length: 8
+DATAC 00000000000000000000000000100000 // last address: 32
+MATH 11 3 5 // R3=R11 : copy end X position
+MATH 10 1 5 // R1=R10 : copy start pixel pos/color
+MATH 2 2 1 // R2=0 : clear R2 so start pos will be the only thing in it
+PMOV 1 2 2 5 26 1 // R2=R1[posX] : copy start position
+SETDATA 0 3 1 // write current pixel to screen
+MATH 15 2 0 // R2++ : increment X
+PMOV 2 1 28 31 26 0 // R1[posX]=R2 : copy next X position
+IFJMP 2 3 3 // if R2<R3 (curX < endX) then continue loop
+// last address: 32
+NILLIST 15 // alignment for next overlay part
+//
+// subproc: draw vertical line
+// inputs:
+//   R10: start pixel and color
+//   R11: end Y position (not inclusive - will not be drawn)
+// overwrites: R1, R2, R3
+// start address: 48 = 00000000000000000000000000110000
+// length: 8
+DATAC 00000000000000000000000000111000 // last address: 56
+MATH 11 3 5 // R3=R11 : copy end Y position
+MATH 10 1 5 // R1=R10 : copy start pixel pos/color
+MATH 2 2 1 // R2=0 : clear R2 so start pos will be the only thing in it
+PMOV 1 2 6 8 23 1 // R2[posY]=R1[posY] : copy start position
+SETDATA 0 3 1 // write current pixel to screen
+MATH 15 2 0 // R2++ : increment Y
+PMOV 2 1 29 31 23 0 // R1[posY]=R2[posY] : copy next Y position
+IFJMP 2 3 3 // if R2<R3 (curY < endY) then continue loop
+// last address: 56
+NILLIST 15 // alignment for next overlay part
+//
+// main 1: draw left and right border
+// start address: 72 = 00000000000000000000000001001000
+// length: 16
+DATAC 00000000000000000000000001011000 // last address: 88
+JMP 0 4
+DATAC 11000000100000000000000000000000 // Start pixel top-left
+DATAC 00000000000000000000000000000111 // End Y position
+DATAC 00000000000000000000000000110000 // Disk address of vline proc
+MOVI 10 1 // R10=ram[1] : load start pixel top-left
+MOVI 11 2 // R11=ram[2] : load end Y position
+MOVI 2 3 // R2=ram[3] : load disk address of vline proc
+JMP 3 9 // Jump to overlay loader : load and run the vline proc
+MATH 10 2 5 // R2=R10 : previous start pixel
+MOVI 10 14 // R10=ram[14] : load start pixel top-right
+MATH 10 3 5 // R3=R10 : new start pixel
+IFJMP 1 0 1 // if R2!=R3 (old start pixel is not same as new) then run again
+MOVI 2 15 // R2=ram[15] : load disk address of next part of main
+JMP 3 9 // Jump to overlay loader : load and run the next part of main
+DATAC 11111100100000000000000000000000 // Start pixel top-right
+DATAC 00000000000000000000000001100000 // Address of next part of main
+// last address: 88
+NILLIST 7 // alignment for next overlay part
+//
+// main 2: draw background
+// start address: 96 = 00000000000000000000000001100000
+// overwrites: R1, R2, R3, R10, R11, R12
+// length: 20
+DATAC 00000000000000000000000001110100 // last address: 116
+JMP 0 4
+DATAC 10000100100000000000000000000000 // Start pixel top-left
+DATAC 00000000000000000000000000001111 // End X position
+DATAC 00000000000000000000000000011000 // Disk address of hline proc
+MOVI 10 1 // R10=ram[1] : load start pixel top-left
+MOVI 11 2 // R11=ram[2] : load end X position
+MOVI 2 3 // R2=ram[3] : load disk address of hline proc
+JMP 0 8 // jump to the rest of the initialization
+MATH 15 12 0 // R12++ : increment Y position
+PMOV 12 10 29 31 23 0 // R10[posY]=R12[posY] : copy new Y position
+MATH 12 2 5 // R2=R12 : copy Y position for comparison
+MOVI 3 18 // R3=ram[18] : load end Y position
+IFJMP 1 0 3 // if P2<P3 (curY < maxY) then continue loop
+MOVI 2 19 // R2=ram[19] : load disk address of next part of main
+JMP 3 9 // Jump to overlay loader : load and run the next part of main
+MATH 12 12 1 // R12=0 : clear value for insertion of Y position bits
+PMOV 10 12 6 8 23 1 // R12[posY]=R10[posY] : copy start Y position
+JMP 3 9 // Jump to overlay loader : load and run the hline proc
+DATAC 00000000000000000000000000000111 // End Y position
+DATAC 00000000000000000000000001111000 // Address of next part of main
+// last address: 116
+NILLIST 3 // alignment for next overlay part
+//
+// main 3: draw W, part 1 of 2
+// start address: 120 = 00000000000000000000000001111000
+// overwrites: R1, R2, R3
+// length: 22
+DATAC 00000000000000000000000010001110 // last address: 142
+MOVI 1 12 // R1=ram[12] : copy start pixel pos/color
+MOVI 3 13 // R3=ram[13] : copy end Y position
+JMP 1 15 // jump to drawing routine
+MOVI 3 13 // R3=ram[13] : copy end Y position
+IFJMP 0 4 1 // if R2!=R3 then second line is done already
+SET 1 0 01001010 // R1[0]=.. : increment X position, keep rest
+SET 3 3 00000111 // R3[3]=7 : update end Y position
+JMP 1 15 // jump to drawing routine
+SETDATA 0 0 0100110110000000000000 // draw top pixel for center of W
+SETDATA 0 0 0100111000000000000000 // draw bottom pixel for center of W
+MOVI 2 14 // R2=ram[14] : load disk address of next part of main
+JMP 3 9 // Jump to overlay loader : load and run the next part of main
+DATAC 01000100100000000000000000000000 // Start pixel, top-left
+DATAC 00000000000000000000000000000100 // end Y position, middle of W
+DATAC 00000000000000000000000010010000 // Address of next part of main
+MATH 2 2 1 // R2=0 : clear R2 so start pos will be the only thing in it
+PMOV 1 2 6 8 23 1 // R2[posY]=R1[posY] : copy start position
+SETDATA 0 3 1 // write current pixel to screen
+MATH 15 2 0 // R2++ : increment Y
+PMOV 2 1 29 31 23 0 // R1[posY]=R2[posY] : copy next Y position
+IFJMP 2 3 3 // if R2<R3 (curY < endY) then continue loop
+JMP 1 3 // jump back to resume drawing commands with next line
+// last address: 142
+NILLIST 1 // alignment for next overlay part
+//
+// main 4: draw W, part 2 of 2
+// note: uses code from the previous part
+// start address: 144 = 00000000000000000000000010010000
+// overwrites: R1, R2, R3
+// length: 13
+DATAC 00000000000000000000000010011101 // last address: 157
+MOVI 1 10 // R1=ram[10] : copy start pixel pos/color
+MOVI 3 11 // R3=ram[11] : copy end Y position
+JMP 1 15 // jump to drawing routine
+MOVI 3 11 // R3=ram[11] : copy end Y position
+IFJMP 0 4 1 // if R2!=R3 then second line is done already
+SET 1 0 01010010 // R1[0]=.. : decrement X position, keep rest
+SET 3 3 00000111 // R3[3]=7 : update end Y position
+JMP 1 15 // jump to drawing routine
+MOVI 2 12 // R2=ram[12] : load disk address of next part of main
+JMP 3 9 // Jump to overlay loader : load and run the next part of main
+DATAC 01010100100000000000000000000000 // Start pixel, top-right
+DATAC 00000000000000000000000000000100 // end Y position, middle of W
+DATAC 00000000000000000000000010101000 // Address of next part of main
+// last address: 157
+NILLIST 10 // alignment for next overlay part
+//
+// main 5: draw I, and draw N part 1 (first line)
+// note: uses code from a previous part
+// start address: 168 = 00000000000000000000000010101000
+// length: 15
+DATAC 00000000000000000000000010110111 // last address: 183
+MOVI 1 11 // R1=ram[11] : copy start pixel pos/color for I
+MOVI 3 13 // R3=ram[13] : copy end Y position
+JMP 1 15 // jump to drawing routine
+MATH 1 2 5 // R2=R1 : copy current pixel pos/color
+MOVI 3 12 // R3=ram[12] : copy start pixel pos/color for N
+IFJMP 0 4 2 // if R2>R3 (cur pix > N start) then second line is done already
+MATH 3 1 5 // R1=R3 : copy start pixel pos/color for N
+MOVI 3 13 // R3=ram[13] : copy end Y position
+JMP 1 15 // jump to drawing routine
+MOVI 2 14 // R2=ram[14] : load disk address of next part of main
+JMP 3 9 // Jump to overlay loader : load and run the next part of main
+DATAC 01011100100000000000000000000000 // Start pixel for I
+DATAC 01100100100000000000000000000000 // Start pixel for N, top-left
+DATAC 00000000000000000000000000000111 // end Y position
+DATAC 00000000000000000000000011000000 // Address of next part of main
+// last address: 183
+NILLIST 8 // alignment for next overlay part
+//
+// main 6: draw N part 2 (diagonal)
+// note: uses code from a previous part
+// start address: 192 = 00000000000000000000000011000000
+// length: 13
+DATAC 00000000000000000000000011001101 // last address: 205
+MOVI 1 10 // R1=ram[10] : copy start pixel pos/color
+MOVI 3 11 // R3=ram[11] : copy end Y position
+JMP 1 15 // jump to drawing routine
+MOVI 3 11 // R3=ram[11] : copy end Y position
+IFJMP 0 4 1 // if R2!=R3 then second line is done already
+SET 1 0 01101110 // R1[0]=.. : increment X position, keep rest
+SET 3 3 00000110 // R3[3]=6 : update end Y position
+JMP 1 15 // jump to drawing routine
+MOVI 2 12 // R2=ram[12] : load disk address of next part of main
+JMP 3 9 // Jump to overlay loader : load and run the next part of main
+DATAC 01101001000000000000000000000000 // Start pixel, part 1 of diagonal
+DATAC 00000000000000000000000000000100 // end Y position, middle of N
+DATAC 00000000000000000000000011011000 // Address of next part of main
+// last address: 205
+NILLIST 10 // alignment for next overlay part
+//
+// main 7: draw N part 3 (last line), and draw exclamation mark, and halt
+// note: uses code from a previous part
+// start address: 216 = 00000000000000000000000011011000
+// length: 13
+DATAC 00000000000000000000000011100101 // last address: 229
+MOVI 1 10 // R1=ram[10] : copy start pixel pos/color for N line
+MOVI 3 11 // R3=ram[11] : copy end Y position
+JMP 1 15 // jump to drawing routine
+MOVI 3 11 // R3=ram[11] : copy end Y position
+IFJMP 0 4 1 // if R2!=R3 then second line is done already
+MOVI 1 12 // R1=ram[12] : copy start pixel pos/color for excl. mark
+SET 3 3 00000101 // R3[3]=5 : set end Y position
+JMP 1 15 // jump to drawing routine
+SETDATA 0 0 0111101100000000000000 // draw bottom point for excl. mark
+HLT // We're done drawing the win screen, so halt here
+DATAC 01110000100000000000000000000000 // Start pixel, top of N line
+DATAC 00000000000000000000000000000111 // end Y position, bottom of N
+DATAC 01111000100000000000000000000000 // Start pixel, top of excl. mark
+// last address: 229
+NILLIST 10 // alignment for next overlay part
