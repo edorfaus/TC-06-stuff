@@ -1,0 +1,315 @@
+TC-06 assembly preprocessor
+===========================
+
+This directory contains a preprocessor script that takes an input file with an
+extended version of the assembly language, and turns it into a plain assembly
+file that the assembler in Senbir can understand.
+
+*Note:* When this file talks about an "identifier", it means a string that is
+used to identify something, and which consists of only US-ASCII letters,
+digits and/or underscores, and that starts with a letter or underscore.
+
+Features
+--------
+
+### Summary
+
+(See following sections for details.)
+
+- Relaxed whitespace/comment handling (indenting, comment-in-comment, etc.)
+- Overlay handling
+- Labels for addresses
+- References to labels and overlays (by identifier instead of by address)
+
+### Relaxed whitespace and comment handling
+
+The assembler in Senbir is rather strict about the whitespace it allows - as
+in, not allowing much of it at all.
+
+This preprocessor relaxes this by collapsing runs of any whitespace (including
+tabs etc.) into a single space, and removing leading/trailing whitespace, so
+that you can use indenting, alignment, etc. as you want, and it gets cleaned
+up for you.
+
+Similarly, since Senbir's assembler doesn't allow blank lines, those are
+replaced with an empty comment, which is allowed.
+
+The assembler is also not very forgiving regarding comments, in particular it
+requires that comments start either at the start of a line or after a space,
+and that they do not contain other comments.
+
+This preprocessor relaxes that by inserting spaces where necessary - both to
+start the comment at the first "//", and in the middle of any following "//"
+(turning them into "/ /") to ensure these problems don't occur..
+
+### Overlays
+
+This feature is meant to handle two related cases, that both occur when the
+program you are writing is meant to be stored on the disk drive.
+
+The first case is for the initial program that will be loaded by a classic
+boot loader, which is expected to be at the start of the disk, preceded by a
+word that tells the loader how long the program is (how many words to load).
+
+The second case is for when your program uses overlays to have more code than
+fits in memory at one time, with a classic overlay loader that expects to be
+told the address of the overlay to load, and for that overlay to start with a
+word that tells the loader what the last address of that overlay is (where to
+stop loading words into memory for that overlay).
+
+It turns out that code for the second case can also handle the first case,
+since when the start address is 0, the end address is the same as the length.
+This is also why a classic overlay loader can also be used as a boot loader.
+
+This preprocessor implements the second case (and thus also the first) by
+adding two new instruction words to the assembly language.
+
+Note that this preprocessor also uses overlays as contexts for references to
+labels. See the section on references for details.
+
+#### OVERLAY identifier
+
+This instruction is used to start a new overlay, and give it an identifier by
+which to refer to it later. That identifier must be unique within the file,
+duplicates are not allowed.
+
+In the output, this instruction will be replaced with an overlay header - a
+DATAC that contains the last address of this overlay.
+
+If the overlay is not explicitly ended with END_OVERLAY, it runs either until
+the next overlay starts, or the end of the file.
+
+##### Example
+
+	OVERLAY main
+	// Code here
+	OVERLAY overlay1
+	// More code here
+	END_OVERLAY
+	DATAC 00000000000000000000000000000001
+	OVERLAY overlay2
+	// Even more code
+
+#### END_OVERLAY
+
+This instruction can be used to mark the end of an overlay, if it needs to end
+before the start of the next overlay or the end of the file.
+
+This is purely a preprocessor instruction, and does not take up any space in
+the final program; it doesn't change the address of any following instruction.
+
+A typical use case for this is to include some data on the disk that you don't
+want to be loaded into memory by the overlay loader - e.g. a list that your
+program loads into a register one at a time to use for something ephemeral.
+
+##### Example
+
+	OVERLAY main
+	// Code to load from disk goes here
+	END_OVERLAY
+	DATAC 00000000000000000000000000000001
+	DATAC 00000000000000000000000000000010
+
+### Labels
+
+In TC-06 assembly programs, one often needs to refer to specific addresses,
+both in memory and on disk - e.g. when using MOVI, JMP or GETDATA. Keeping
+track of these addresses manually in the face of changing code (and thus
+addresses) is both error prone and annoying, especially in large programs.
+
+Labels provide a way to give such addresses an identifer, so that they can be
+referenced by that identifier instead of having to specify the numeric address
+yourself. (See the section on references for details on how to do that.)
+
+Labels are created by prefixing a line with the label identifier, followed by
+a colon. Whitespace is allowed both between and around these tokens.
+
+The label then points to the address of the first instruction that follows it,
+whether that is on the same line or a later one.
+
+It is allowed to have multiple labels for the same address, and even to create
+more than one on the same line, regardless of it having any other instruction.
+
+Labels are namespaced to the nearest enclosing overlay, if any, or if not, to
+the global scope. This means that it is possible to have more than one label
+with the same identifier, as long as they are in different overlays - but it
+is not allowed to have duplicates within an overlay (or outside any overlays).
+
+##### Example
+
+	OVERLAY main
+	one:
+	// comment
+	two :
+	three: four: MOVI 2 0
+	five :MOVO 2 0
+	six:
+	OVERLAY overlay2
+	five: JMP 1 0
+	seven:
+	END_OVERLAY
+	eight:five:HLT
+
+Here, the labels:
+
+- one, two, three and four all point to the MOVI instruction
+- six points to the start address of overlay2 (the DATAC it was turned into)
+- seven and eight both point to the HLT (since END_OVERLAY doesn't take space)
+- five points to the MOVO, the JMP or the HLT instruction depending on context
+
+See the section on references for an explanation of how to determine or set
+which of the labels named five is being referred to in a given context.
+
+### References to labels and overlays
+
+For the label and overlay identifiers to really be useful, we need a way to
+refer to them by that identifier.
+
+This preprocessor provides that by way of @-references.
+
+An @-reference consists of an at-sign "@" followed by the type of reference,
+followed by a colon, followed by the identifier you are referring to. When the
+identifier is a label identifier, this can further be followed by another
+colon, and a context specifier.
+
+At the moment, there are four types of @-references: overlay, disk, local and
+relative. All of these except the overlay type refer to label identifiers.
+
+#### The "overlay" reference type
+
+This type of reference is used to get the disk address of an overlay - in
+other words, where on the disk that overlay starts.
+
+As such, the identifier is here an overlay identifier, and no context
+specifier is accepted since the overlay identifiers are always global.
+
+The typical use case for this is to send that address to the overlay loader.
+
+##### Example
+
+	OVERLAY main
+	JMP 0 2
+	DATAC @overlay:myFunction // The address of the myFunction overlay
+	MOVI 2 1 // Load the address into R2
+	JMP 3 9  // Call the overlay loader
+	OVERLAY myFunction
+	JMP 0 2
+	DATAC @overlay:main // The address of the main overlay
+
+Assuming the overlay loader is reached by `JMP 3 9`, this code will end up
+repeatedly loading and executing the two overlays, going back and forth
+between them, since the only difference in the code is the overlay address.
+
+#### The "disk" reference type
+
+This type of reference is used to get the disk address of a label - in other
+words, where on the disk the thing that the label points to is.
+
+As such, the identifier is here a label identifier, and a context specifier
+can be given. If it is not given, the default context specifier is here "*".
+
+A basic use case for this is to load some data directly from the disk, without
+first loading it into memory as part of the overlay.
+
+##### Example
+
+	OVERLAY main
+	JMP 0 2          // Skip to code
+	DATAC @disk:data // The disk address of the data
+	MOVI 2 1         // Load the address into R2
+	GETDATA 1 3 2    // Load the data from disk
+	// Do something with that data
+	END_OVERLAY
+	data: DATAC 00000001000000010000000100000001
+
+#### The "local" reference type
+
+This type of reference is used to get the memory address of a label - in other
+words, where in memory the thing that the label points to is, or equivalently,
+where it is relative to the overlay that it is in.
+
+As such, the identifier is here a label identifier, and a context specifier
+can be given. If it is not given, the default context specifier is here the
+overlay identifier of the overlay that the @-reference is in.
+
+A basic use case for this is as the target of a JMP, or to move data between
+memory and registers.
+
+##### Example
+
+	OVERLAY main
+	loop: // Do some stuff here
+	MOVI 2 @local:myValue // Load myValue into R2
+	IFJMP 1 @local:loop 0 // Jump to loop if R2 == R3
+	HLT
+	myValue: DATAC 00000000000000000000000000000101
+
+#### The "relative" reference type
+
+This type of reference is used to get the relative address of a label, as
+compared to the address of the @-reference - or in other words, how far away
+from the @-reference that label is.
+
+As such, the identifier is here a label identifier, and a context specifier
+can be given. If it is not given, the default context specifier is here the
+overlay identifier of the overlay that the @-reference is in.
+
+One possible use case for this is as the target of a relative JMP. However, it
+is generally safer to use a non-relative JMP with an @local reference, since
+that won't break if the label is moved to the other side of the JMP without
+updating the JMP direction accordingly.
+
+##### Example
+
+	OVERLAY main
+	// Do stuff
+	IFJMP 0 @relative:skip 0 // Jump forward to skip if R2 == R3
+	// Do more stuff
+	skip:
+
+#### The context specifier
+
+The context specifier identifies which context to try to find the given label
+identifier in, as a way to avoid getting the wrong address if there are other
+contexts that have the same identifier.
+
+When it is not given, there's a default value that depends on the reference
+type, so see the section for that reference type. Usually that default is what
+you want, but in some cases you may need to specify otherwise.
+
+Since each overlay is a separate context, the overlay identifiers are valid
+context identifiers as well, and specify that the label should be found in
+that overlay.
+
+In addition, there are two predefined context specifiers:
+
+- "" (the empty string), which means to look outside of all the overlays.
+- "*" (a star), which means to look in all contexts.
+
+If looking in all contexts, then the first matching label identifier is
+returned, and if there is more than one match, then a warning is printed.
+
+Note that this is a warning, not an error, so it will not stop the processing.
+
+##### Example
+
+Note that this is not meant as an example of _good_ code, just an example of
+ways the context specifier can be used.
+
+	OVERLAY main
+	MOVI 1 @local:addr   // R1 = address of global "data"
+	GETDATA 1 3 1        // R1 = value of global "data"
+	MOVO 1 @local:data   // save R1 into local "data" (no trailing ":")
+	MOVI 2 @local:next:* // R2 = address of overlay "second" (no warning here)
+	JMP 3 9              // Load overlay "second"
+	addr: DATAC @disk:data: // Address of global "data" (due to trailing ":")
+	next: DATAC @overlay:second // Address of overlay "second"
+	data: NIL                   // Memory location to save the data in
+	// Note that the second overlay is not long enough to overwrite this data
+	OVERLAY second
+	MOVI 1 @local:data:main // R1 = value of local "data" (not overwritten)
+	MATH 1 1 0              // R1 += R1 : double it
+	MOVO 1 @local:data:*    // set value of local "data" (generates a warning)
+	HLT
+	END_OVERLAY
+	data: DATAC 00000000000000000000000000000010
