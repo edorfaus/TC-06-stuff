@@ -15,6 +15,22 @@ identifierRegex="[$identifierRegex][${identifierRegex}0123456789]*"
 # Holds a mapping of hex digit to equivalent bits, for converting to binary.
 declare -A hexToBitsMap
 
+# Holds a mapping of instruction to the parameter types for that instruction.
+declare -A instructionParameters
+instructionParameters[DATAC]="bits32"
+instructionParameters[NILLIST]="int32"
+instructionParameters[NIL]=""
+instructionParameters[HLT]=": uint28"
+instructionParameters[MOVI]="uint4 uint24"
+instructionParameters[MOVO]="uint4 uint24"
+instructionParameters[JMP]="uint2 uint24"
+instructionParameters[SETDATA]="uint4 uint2 setdata : uint4"
+instructionParameters[GETDATA]="uint4 uint2 setdata"
+instructionParameters[SET]="uint4 uint2 bits8"
+instructionParameters[IFJMP]="uint2 uint24 uint2"
+instructionParameters[PMOV]="uint4 uint4 uint5 uint5 uint5 uint1"
+instructionParameters[MATH]="uint4 uint4 uint4 : bits16"
+
 # Used to hold the list of overlays, with info about each.
 declare -A overlayList
 # Used to hold the addresses at which the current overlay changes.
@@ -438,8 +454,8 @@ runPass2() {
 	local line_no=0
 	local address=0
 	local currentOverlay=
-	local line comment tmp pre refType refIdentifier refLocalTo ret
-	local overlayAddress labelAddress labelOverlay
+	local line comment tmp pre refType refIdentifier refLocalTo ret optional
+	local overlayAddress labelAddress labelOverlay formattedNumber
 	local atIdentifierRegex="^($identifierRegex)([: ].*)?$"
 	local atLocalToRegex="^:([*]?|$identifierRegex)( .*)?$"
 	# Reset the program text so we can add things back into it.
@@ -577,7 +593,69 @@ runPass2() {
 
 		case "${line%% *}" in
 			DATAC|NIL|HLT|MOVI|MOVO|JMP|SETDATA|GETDATA|SET|IFJMP|PMOV|MATH)
-				addProgramLine "$line" "$comment"
+				IFS=" " read -r pre ret <<<"$line"
+				optional=0
+				for refType in ${instructionParameters[$pre]} ; do
+					if [ "$refType" = ":" ]; then
+						optional=1
+						continue
+					fi
+					if [ "$ret" = "" ]; then
+						if [ $optional -eq 0 ]; then
+							printf >&2 "Error: %s at line %s:\n%s\n" \
+								"Missing argument" "$line_no" "$line"
+							return 1
+						fi
+						continue
+					fi
+					IFS=" " read -r tmp ret <<<"$ret"
+					if [ "$refType" = "setdata" ]; then
+						# This parameter handles differently based on the flag.
+						case "${pre##* }" in
+							0) refType="bits22" ;;
+							3) refType="uint4" ;;
+							1|2)
+								# Parse it as signed int, like Senbir does.
+								if ! parseAndFormatNumber "int22" "$tmp"
+								then
+									printf >&2 "Error: %s at line %s:\n%s\n" \
+										"Invalid argument" "$line_no" "$line"
+									return 1
+								fi
+								# Check that the abs. value fits in 21 bits.
+								if [ $formattedNumber -lt 0 ]; then
+									formattedNumber=$(( 0 - $formattedNumber ))
+								fi
+								if ! parseAndFormatNumber "uint21" "$formattedNumber"
+								then
+									printf >&2 "Error: %s at line %s:\n%s\n" \
+										"Invalid argument" "$line_no" "$line"
+									return 1
+								fi
+								# This argument is OK, output it as int22.
+								refType="int22"
+								;;
+							*)
+								printf >&2 "Error: %s at line %s:\n%s\n" \
+									"Unknown flag value" "$line_no" "$line"
+								return 1
+								;;
+						esac
+					fi
+					if ! parseAndFormatNumber "$refType" "$tmp"
+					then
+						printf >&2 "Error: %s at line %s:\n%s\n" \
+							"Invalid argument" "$line_no" "$line"
+						return 1
+					fi
+					pre+=" $formattedNumber"
+				done
+				if [ "$ret" != "" ]; then
+					printf >&2 "Error: %s at line %s:\n%s\n" \
+						"Too many arguments" "$line_no" "$line"
+					return 1
+				fi
+				addProgramLine "$pre" "$comment"
 				address=$(($address + 1))
 				;;
 			NILLIST)
