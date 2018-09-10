@@ -17,6 +17,8 @@ Features
 (See following sections for details.)
 
 - Relaxed whitespace/comment handling (indenting, comment-in-comment, etc.)
+- Number format unification
+- Minor fixes/improvements
 - Overlay handling
 - Labels for addresses
 - References to labels and overlays (by identifier instead of by address)
@@ -41,6 +43,105 @@ and that they do not contain other comments.
 This preprocessor relaxes that by inserting spaces where necessary - both to
 start the comment at the first "//", and in the middle of any following "//"
 (turning them into "/ /") to ensure these problems don't occur..
+
+### Number format unification
+
+The assembler in Senbir parses numbers in different ways depending on which
+argument of which instruction that number is for - sometimes it expects raw
+binary bit strings, sometimes decimal numbers, and somes either can be used,
+and which it chooses to use depends on things like the number of digits.
+
+This preprocessor unifies this by specifying a single set of number parsing
+rules that it uses everywhere, with checks for whether the given value makes
+sense for that particular parameter.
+
+Those parsing rules are specified in such a way that code Senbir's assembler
+already understands should still work fine after being passed through the
+preprocessor (though it might not _look_ exactly the same).
+
+The parsing rules are:
+
+1. If the value starts with `0x` or `0X`, optionally prefixed by `+` or `-`,
+   then parse it as hexadecimal.
+2. If the value starts with `0b` or `0B`, optionally prefixed by `+` or `-`,
+   then parse it as binary with an optional placement extension (see below).
+3. If the value only contains the digits `0` and `1`, and has exactly as many
+   digits (including any leading 0s) as the parameter has bits, then parse it
+   as binary (no placement extension needed, as all the digits are there).
+4. Otherwise, parse it as signed decimal (with the `+` sign being optional).
+
+Rule 3 requires that we know the bit size of the parameter the value being
+parsed is for, and generating the proper output so that Senbir's assembler
+understands it also requires knowing the type of that parameter.
+
+Combine those requirements, and we also have enough information to validate
+both that the value of each argument is within the possible range for that
+parameter, and that the instruction actually has all the required arguments
+and no extra ones. Therefore, those things are also checked, to avoid getting
+errors in Senbir later.
+
+It is worth noting that where we have to output an argument as bits, negative
+values are represented using two's-complement notation, and we accept the full
+range of both signed and unsigned numbers for the source value.
+
+#### Binary placement extension
+
+The placement extension for binary numbers is intended for cases where you
+don't want to have to specify all the bits of a number, just to determine
+where in that number the bits you specified will end up. So, it only comes
+into play when you need fewer bits than there are room for in the parameter.
+
+Let's take DATAC as an example, which takes 32 bits, and say that you have
+6 bits of actual data, with the rest being zeroes.
+
+The first, and most basic, option is to specify all 32 bits, but that requires
+you to add 26 bits of zeroes to the 6 bits you're actually interested in,
+which can obscure which bits are actually important. However, in return, you
+can place those bits anywhere in the number.
+
+Thus, these two are equivalent:
+	DATAC 0b00000000010100001010000000000000
+	DATAC 00000000010100001010000000000000
+
+The second option is to specify just the bits you actually need, in which case
+they will be placed in the low bits of the result, with zeroes filling the rest.
+
+Thus, these two are equivalent:
+	DATAC 0b101101
+	DATAC 00000000000000000000000000101101
+
+The third option is for when you want the bits to instead be placed in the
+high bits of the result, with zeroes filling the rest. To do this, specify
+just the bits you actually need, followed by three periods. 
+
+Thus, these two are equivalent:
+	DATAC 0b101101...
+	DATAC 10110100000000000000000000000000
+
+The fourth and last option is for when you have bits for both the low and high
+end bits of the result, with zeroes filling the middle. To do this, specify
+the high bits, followed by three periods, followed by the low bits.
+
+Thus, these two are equivalent:
+	DATAC 0b101...101
+	DATAC 10100000000000000000000000000101
+
+It is not possible to use more than one set of three periods, as then the
+parser could not know how many zeroes you intended each place to have.
+
+### Minor fixes/improvements
+
+Sometimes, Senbir's assembler allows something it probably shouldn't, or
+behaves oddly in corner cases or when given unusual code.
+
+This preprocessor blocks or changes some of those things, to protect the
+developer and attempt to make the code do what it appears they intended.
+
+In particular, it:
+
+- blocks instructions with suffixes (Senbir accepts e.g. MOVIES to mean MOVI).
+- blocks NILLIST with a negative count (Senbir would add one NIL).
+- changes NILLIST 0 into a comment (Senbir would add one NIL).
 
 ### Overlays
 
