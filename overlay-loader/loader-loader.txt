@@ -1,0 +1,45 @@
+// R15: static: 1
+// R14: static*: MOVO instruction (address varies)
+// R3: temp: loop max = end address on disk
+// R2: input: source address on disk; temp: loop counter
+// R1: temp: data read from disk
+
+// At most 22 words can be used by each overlay section.
+
+OVERLAY overlay_loader_loader
+
+MOVI 15 @local:overlay_loader_one // R15=1 : initialize register for math use
+MOVI 14 @local:save_to_ram // R14=ram[..] : load the save-to-RAM instruction
+MOVI 2 @local:overlay_loader_addr // R2=ram[..] : load address of loader code
+GETDATA 1 3 2 // R1=read(disk, R2) : read disk address of last instr. to load
+MATH 1 3 5 // R3=R1 : set loop max register to that disk address
+loop:
+ MOVO 14 @local:save_to_ram // ram[..]=R14 : update the save-to-RAM instruction
+ MATH 15 14 0 // R14++ : increment RAM address
+ MATH 15 2 0 // R2++ : increment disk address
+ GETDATA 1 3 2 // R1=read(disk, R2) : read program data from disk
+ save_to_ram: MOVO 1 22 // ram[22]=R1 : save loaded data to RAM; self-modified
+ IFJMP 2 @relative:loop 3 // jump back to loop if R2<R3
+SET 2 3 @disk:overlay_loader_end // load address of main program
+JMP 3 9 // run the overlay loader to load the main program
+
+overlay_loader_one: DATAC 1
+overlay_loader_addr: DATAC @overlay:overlay_loader_code
+
+OVERLAY overlay_loader_code
+// This overlay avoids using @-references because it is not loaded at addr 0.
+
+GETDATA 1 3 2 // R1=read(disk, R2) : read disk address of last instr. to load
+MATH 1 3 5 // R3=R1 : set loop max register to that disk address
+SET 14 3 0 // R14[address]=0 : initialize RAM address
+ MOVO 14 29 // ram[29]=R14 : update the save-to-RAM instruction; start of loop
+ MATH 15 14 0 // R14++ : increment RAM address
+ MATH 15 2 0 // R2++ : increment disk address
+ GETDATA 1 3 2 // R1=read(disk, R2) : read program data from disk
+ MOVO 1 0 // ram[0]=R1 : save loaded data to RAM; note: self-modified
+ IFJMP 2 5 3 // loop: jump 5 back if R2<R3
+JMP 1 0 // start the loaded program
+
+END_OVERLAY
+
+overlay_loader_end: // End of overlay loader, equals start of main program
