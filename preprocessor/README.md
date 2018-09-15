@@ -3,11 +3,19 @@ TC-06 assembly preprocessor
 
 This directory contains a preprocessor script that takes an input file with an
 extended version of the assembly language, and turns it into a plain assembly
-file that the assembler in Senbir can understand.
+file that the assembler in [Senbir] can understand.
+
+This preprocessor script is written in Bash 4, using only built-ins, so that
+should be the only dependency to make this work.
+
+This file primarily describes the language that the preprocessor understands,
+or at least the parts that are not already in Senbir's assembly language.
 
 *Note:* When this file talks about an "identifier", it means a string that is
 used to identify something, and which consists of only US-ASCII letters,
 digits and/or underscores, and that starts with a letter or underscore.
+
+[Senbir]: https://cliffracerx.itch.io/senbir
 
 Features
 --------
@@ -42,7 +50,7 @@ and that they do not contain other comments.
 
 This preprocessor relaxes that by inserting spaces where necessary - both to
 start the comment at the first "//", and in the middle of any following "//"
-(turning them into "/ /") to ensure these problems don't occur..
+(turning them into "/ /") to ensure these problems don't occur.
 
 ### Number format unification
 
@@ -100,6 +108,7 @@ which can obscure which bits are actually important. However, in return, you
 can place those bits anywhere in the number.
 
 Thus, these two are equivalent:
+
 	DATAC 0b00000000010100001010000000000000
 	DATAC 00000000010100001010000000000000
 
@@ -107,6 +116,7 @@ The second option is to specify just the bits you actually need, in which case
 they will be placed in the low bits of the result, with zeroes filling the rest.
 
 Thus, these two are equivalent:
+
 	DATAC 0b101101
 	DATAC 00000000000000000000000000101101
 
@@ -115,6 +125,7 @@ high bits of the result, with zeroes filling the rest. To do this, specify
 just the bits you actually need, followed by three periods. 
 
 Thus, these two are equivalent:
+
 	DATAC 0b101101...
 	DATAC 10110100000000000000000000000000
 
@@ -123,6 +134,7 @@ end bits of the result, with zeroes filling the middle. To do this, specify
 the high bits, followed by three periods, followed by the low bits.
 
 Thus, these two are equivalent:
+
 	DATAC 0b101...101
 	DATAC 10100000000000000000000000000101
 
