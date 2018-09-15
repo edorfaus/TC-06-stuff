@@ -11,6 +11,10 @@ should be the only dependency to make this work.
 This file primarily describes the language that the preprocessor understands,
 or at least the parts that are not already in Senbir's assembly language.
 
+*Note:* Known bug: The current version of the script sometimes uses the wrong
+line numbers in its error messages. Fixing this is on the TODO list, but in
+the meantime, be aware that you may have to look around it to find the line.
+
 *Note:* When this file talks about an "identifier", it means a string that is
 used to identify something, and which consists of only US-ASCII letters,
 digits and/or underscores, and that starts with a letter or underscore.
@@ -26,6 +30,7 @@ Features
 
 - Relaxed whitespace/comment handling (indenting, comment-in-comment, etc.)
 - Number format unification
+- Constant expression evaluation
 - Minor fixes/improvements
 - Overlay handling
 - Labels for addresses
@@ -140,6 +145,86 @@ Thus, these two are equivalent:
 
 It is not possible to use more than one set of three periods, as then the
 parser could not know how many zeroes you intended each place to have.
+
+### Constant expression evaluation
+
+Sometimes, it is more convenient (or even necessary) for a value to be set
+not as a simple number, but as an expression that combines multiple numbers.
+
+A preprocessor can (obviously) only do this for values that are known at the
+time of processing, hence the need for all the involved numbers to be
+constants, but this is still useful - especially when combined with
+@-expressions, which for the purposes of these expressions can usually be
+considered constants.
+
+There is one significant exception to that, and that's in an argument to the
+NILLIST instruction. The value of that parameter affects the value of the
+@-references (especially those coming after it), so it is processed during the
+first pass, before the values of the @-references are known - and therefore,
+@-references cannot be used in that argument, nor expressions that involve
+them. However, expressions that don't involve them can still be used there.
+
+It is worth noting that the numbers and operations inside an expression are
+not restricted by the bit size of the parameter the expression is for while
+the evaluation is happening (though the placement extension etc. still uses
+the correct size). Instead, those restrictions are only applied to the result
+of the expression evaluation, as if that result had been specified directly.
+
+#### General syntax
+
+To be able to find such expressions, in the face of code that might have
+several of them per line, it is required for every expression to be enclosed
+in parenthesis. This does not relax the requirement for separate arguments to
+be separated by whitespace, even if both are expressions - but it does allow
+expressions to themselves contain whitespace without having the individual
+parts of the expression be considered separate arguments to the instruction.
+
+Also, while parenthesis can be used in the expression (e.g. to override the
+default operator precedence), they must be balanced.
+
+The actual numbers used within an expression use the same parser as numbers
+outside, as described in the "Number format unification" section.
+
+The supported operators are the ones of basic integer arithmetic:
+
+- `*` for multiplication
+- `/` for integer division
+- `%` for remainder (or modulo arithmetic)
+- `+` for addition
+- `-` for subtraction
+
+plus some for doing bitwise logic:
+
+- `~` for bitwise NOT (the only unary operator)
+- `&` for bitwise AND
+- `|` for bitwise OR (inclusive OR)
+- `^` for bitwise XOR (exclusive OR)
+- `<<` for shift left
+- `>>` for shift right
+
+That the `~` operator is unary means that it does not combine two numbers, but
+instead takes the number that comes immediately after it, and does something
+to it - in this case, inverts its bits.
+
+#### Operator precedence
+
+This preprocessor uses the underlying expression evaluator of Bash to actually
+evaluate the expression (after the numbers have been parsed), so the operator
+precedence is tied to that of Bash.
+
+In this list, the operators listed together have the same precedence, while
+the overall list is shown in order of decreasing precedence.
+
+- `~` - bitwise negation
+- `*`, `/`, `%` - multiplication, division, remainder
+- `+`, `-` - addition, subtraction
+- `<<`, `>>` - left and right bitwise shift
+- `&` - bitwise AND
+- `^` - bitwise XOR
+- `|` - bitwise OR
+
+As an example, this means that the expression `( 1 << 2 + 1 )` evaluates to 8,
+not 5, while the expression `( 1 << 2 | 1 )` does the opposite.
 
 ### Minor fixes/improvements
 

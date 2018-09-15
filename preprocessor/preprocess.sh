@@ -157,18 +157,89 @@ initHexToBitsMap() {
 initHexToBitsMap
 unset initHexToBitsMap
 
+# Parse the given expression down into a single number to be formatted.
+# This should not be called outside of parseAndFormatNumber.
+_parseExpression() {
+	# from caller: type typeLen value
+	local formattedNumber anyType="_any$typeLen" pre= depth=0 expr="$value"
+	local state=number
+	while [ "$expr" != "" ]; do
+		case "$state" in
+			number)
+				if [[ "$expr" =~ ^[[:space:]]*"("[[:space:]]*(.*)$ ]]; then
+					pre+=" ("
+					depth=$(($depth + 1))
+					expr=${BASH_REMATCH[1]}
+				elif [[ "$expr" =~ ^[[:space:]]*([+-]?[0-9][0-9a-fA-FxX_.]*)[[:space:]]*(.*)$ ]]; then
+					local number=${BASH_REMATCH[1]}
+					expr=${BASH_REMATCH[2]}
+					parseAndFormatNumber "$anyType" "$number" || return 1
+					pre+=" $formattedNumber"
+					state=operator
+				elif [[ "$expr" =~ ^[[:space:]]*"~"[[:space:]]*(.*)$ ]]; then
+					# This is technically an operator, not a number, but since
+					# it's a unary operator, it works better here.
+					pre+=" ~"
+					expr=${BASH_REMATCH[1]}
+				else
+					printf >&2 "Error: Invalid expression, %s: %s\n" \
+						"expected a number but found" "${expr:0:20}"
+					return 1
+				fi
+				;;
+			operator)
+				if [[ "$expr" =~ ^[[:space:]]*")"[[:space:]]*(.*)$ ]]; then
+					pre+=" )"
+					depth=$(($depth - 1))
+					expr=${BASH_REMATCH[1]}
+					if [ $depth -lt 1 -a "$expr" != "" ]; then
+						printf >&2 "Error: Invalid expression, %s: %s\n" \
+							"unbalanced end-parenthesis before" "${expr:0:20}"
+						return 1
+					fi
+				elif [[ "$expr" =~ ^[[:space:]]*([&|^*/%+-]|<<|>>)[[:space:]]*(.*)$ ]]; then
+					pre+=" ${BASH_REMATCH[1]}"
+					expr=${BASH_REMATCH[2]}
+					state=number
+				else
+					printf >&2 "Error: Invalid expression, %s: %s\n" \
+						"expected an operator but found" "${expr:0:20}"
+					return 1
+				fi
+				;;
+			*)
+				printf >&2 "Internal error: Unknown state: '%s'\n" "$state"
+				return 1
+		esac
+	done
+	if [ "$state" = "number" ]; then
+		printf >&2 "Error: Invalid expression, missing number at end: %s\n" \
+			"$value"
+		return 1
+	fi
+	if [ $depth -gt 0 ]; then
+		printf >&2 "Error: Invalid expression, unclosed parenthesis: %s\n" \
+			"$value"
+		return 1
+	fi
+	value=$(( $pre ))
+}
+
 # Parse, check and then format a number according to its parameter type.
 # On success, returns 0 with result in the $formattedNumber variable.
 # On error, returns 1.
 # parseAndFormatNumber <type> <number>
 parseAndFormatNumber() {
 	local type typeLen value="$2" sign
-	if ! [[ "$1" =~ ^(bits|u?int)([0-9]+)$ ]]; then
+	if ! [[ "$1" =~ ^(bits|u?int|_any)([0-9]+)$ ]]; then
 		printf >&2 "Error: Invalid number type: %s\n" "$1"
 		return 1
 	fi
 	type=${BASH_REMATCH[1]}
 	typeLen=${BASH_REMATCH[2]}
+	if [ "${value:0:1}" = "(" ]; then
+		_parseExpression || return 1
+	fi
 	if [[ "$value" =~ ^([+-]?)0[xX](.*)$ ]]; then
 		# Explicitly hexadecimal.
 		sign=${BASH_REMATCH[1]}
@@ -286,6 +357,15 @@ parseAndFormatNumber() {
 			formattedNumber=${op// /0}
 			return 0
 			;;
+		_any)
+			# This type is used for intermediate values, so don't check range.
+			if [ "$sign" = "-" ]; then
+				formattedNumber=$(( 0 - $value ))
+			else
+				formattedNumber=$value
+			fi
+			return 0
+			;;
 		*)
 			printf >&2 "Internal error: Unknown type: '%s' from '%s'\n" \
 				"$type" "$1"
@@ -383,9 +463,9 @@ runPass1() {
 				address=$(($address + 1))
 				;;
 			NILLIST)
-				if ! [[ "$line" =~ ^"NILLIST "([^[:space:]]+)$ ]]; then
+				if ! [[ "$line" =~ ^"NILLIST "(.+)$ ]]; then
 					printf >&2 "Error: %s for NILLIST at line %s:\n%s\n" \
-						"Missing or invalid argument" "$line_no" "$line"
+						"Missing argument" "$line_no" "$line"
 					return 1
 				fi
 				if ! parseAndFormatNumber int32 "${BASH_REMATCH[1]}"
@@ -609,6 +689,18 @@ runPass2() {
 						continue
 					fi
 					IFS=" " read -r tmp ret <<<"$ret"
+					if [ "${tmp:0:1}" = "(" ]; then
+						# It's an expression, so grab all of it even if there
+						# are spaces in it.
+						local noOpen=${tmp//\(} noEnd=${tmp//\)}
+						while [ ${#noOpen} -lt ${#noEnd} -a "$ret" != "" ]; do
+							local tmp2
+							IFS=" " read -r tmp2 ret <<<"$ret"
+							tmp+=" $tmp2"
+							noOpen=${tmp//\(}
+							noEnd=${tmp//\)}
+						done
+					fi
 					if [ "$refType" = "setdata" ]; then
 						# This parameter handles differently based on the flag.
 						case "${pre##* }" in
