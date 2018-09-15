@@ -62,9 +62,9 @@ preprocessor (though it might not _look_ exactly the same).
 The parsing rules are:
 
 1. If the value starts with `0x` or `0X`, optionally prefixed by `+` or `-`,
-   then parse it as hexadecimal.
+   then remove underscores and parse it as hexadecimal.
 2. If the value starts with `0b` or `0B`, optionally prefixed by `+` or `-`,
-   then parse it as binary with an optional placement extension (see below).
+   then remove underscores and parse it as binary with a placement extension.
 3. If the value only contains the digits `0` and `1`, and has exactly as many
    digits (including any leading 0s) as the parameter has bits, then parse it
    as binary (no placement extension needed, as all the digits are there).

@@ -172,7 +172,7 @@ parseAndFormatNumber() {
 	if [[ "$value" =~ ^([+-]?)0[xX](.*)$ ]]; then
 		# Explicitly hexadecimal.
 		sign=${BASH_REMATCH[1]}
-		if ! [[ "${BASH_REMATCH[2]}" =~ ^([0123456789abcdefABCDEF]+)$ ]]; then
+		if ! [[ "${BASH_REMATCH[2]//_}" =~ ^([0123456789abcdefABCDEF]+)$ ]]; then
 			printf >&2 "Error: Invalid hexadecimal value: %s\n" "$value"
 			return 1
 		fi
@@ -180,7 +180,7 @@ parseAndFormatNumber() {
 	elif [[ "$value" =~ ^([+-]?)0[bB](.*)$ ]]; then
 		# Explicitly binary.
 		sign=${BASH_REMATCH[1]}
-		if ! [[ "${BASH_REMATCH[2]}" =~ ^([01]+)("..."([01]*))?$ ]]; then
+		if ! [[ "${BASH_REMATCH[2]//_}" =~ ^([01]+)("..."([01]*))?$ ]]; then
 			printf >&2 "Error: Invalid binary value: %s\n" "$value"
 			return 1
 		fi
