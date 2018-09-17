@@ -14,9 +14,9 @@ IFJMP 2 5 3 // loop: jump 5 back if R2<R3
 JMP 1 0 // start the loaded program
 //
 // R15: static: 1
-// R14: static*: MOVO instruction (address varies)
+// R14: static*: MOVO instruction using register 1 (address varies)
 // R1=temp: data read from disk
-// R2=input: source address on disk; temp: loop counter
+// R2=input: source address on disk; temp: loop counter for disk address
 // R3=temp: loop max = end address on disk
 //
 // At most 22 addresses can be used by each overlay section.
