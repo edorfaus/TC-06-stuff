@@ -135,6 +135,129 @@ addLabel() {
 
 # -------- END: LABEL HANDLING --------
 
+# -------- START: AT-REFERENCES --------
+
+# Replace any @-references in the current line with their calculated values.
+# Both input and output is in $line which must be without comment already.
+# This function also uses these variables: $line_no $address $currentOverlay
+# Returns 0 on success, 1 on error (after printing error message).
+replaceAtReferences() {
+	local pre=$line tmp refType refIdentifier refLocalTo
+	local overlayAddress labelAddress labelOverlay
+	local atIdentifierRegex="^($identifierRegex)([: ].*)?\$"
+	local atLocalToRegex="^:([*]?|$identifierRegex)( .*)?\$"
+	# Handle @-references, replacing them with the actual values.
+	while tmp=${pre#*@} ; [ "$tmp" != "$pre" ]; do
+		pre=${pre%%@*}
+		if [ "${pre:(-1)}" != " " ]; then
+			printf >&2 "Error: %s at line %s:\n%s\n" \
+				"@-reference must be preceded by space" "$line_no" "$line"
+			return 1
+		fi
+		refType=${tmp%%:*}
+		if [ "$refType" = "$tmp" ]; then
+			printf >&2 "Error: %s at line %s:\n%s\n" \
+				"Invalid @-reference, missing colon" "$line_no" "$line"
+			return 1
+		fi
+		tmp=${tmp#*:}
+		if ! [[ "$tmp" =~ $atIdentifierRegex ]]; then
+			printf >&2 "Error: %s at line %s:\n%s\n" \
+				"Invalid identifier in @-reference" "$line_no" "$line"
+			return 1
+		fi
+		refIdentifier=${BASH_REMATCH[1]}
+		tmp=${BASH_REMATCH[2]}
+
+		case "$refType" in
+			overlay)
+				if [ "${tmp:0:1}" = ":" ]; then
+					printf >&2 "Error: %s at line %s:\n%s\n" \
+						"Extra part in overlay @-reference" "$line_no" "$line"
+					return 1
+				fi
+				if ! getOverlayAddress "$refIdentifier"
+				then
+					printf >&2 "Error: %s at line %s:\n%s\n" \
+						"Unknown overlay in @-reference" "$line_no" "$line"
+					return 1
+				fi
+				pre+="$overlayAddress$tmp"
+				;;
+			disk)
+				refLocalTo="*"
+				;;&
+			local|relative)
+				refLocalTo=$currentOverlay
+				;;&
+			disk|local|relative)
+				if [[ "$tmp" =~ $atLocalToRegex ]]; then
+					refLocalTo=${BASH_REMATCH[1]}
+					tmp=${BASH_REMATCH[2]}
+				elif [ "${tmp:0:1}" = ":" ]; then
+					printf >&2 "Error: %s at line %s:\n%s\n" \
+						"Invalid local-to identifier in @-reference" \
+						"$line_no" "$line"
+					return 1
+				fi
+				if [ "$refLocalTo" = "*" ]; then
+					getLabelAddress "$refIdentifier"
+					ret=$?
+				else
+					getLabelAddress "$refIdentifier" "$refLocalTo"
+					ret=$?
+				fi
+				if [ $ret -ne 0 ]; then
+					printf >&2 "Error: %s at line %s:\n%s\n" \
+						"Unknown label in @-reference" "$line_no" "$line"
+					return 1
+				fi
+				;;&
+			disk)
+				pre+="$labelAddress$tmp"
+				;;
+			local)
+				if ! getLabelOverlay "$refIdentifier" "$labelAddress"
+				then
+					printf >&2 "Error: %s at line %s:\n%s\n" \
+						"Unable to get overlay of label" "$line_no" "$line"
+					return 1
+				fi
+				# If the label is not in an overlay, then it is not local
+				# in any meaningful sense, since it's never overlay-loaded.
+				if [ "$labelOverlay" = "" ]; then
+					printf >&2 "Error: %s at line %s:\n%s\n" \
+						"Local label must be in overlay" "$line_no" "$line"
+					return 1
+				fi
+				if ! getOverlayAddress "$labelOverlay"
+				then
+					printf >&2 "Error: %s at line %s:\n%s\n" \
+						"Unknown overlay for label" "$line_no" "$line"
+					return 1
+				fi
+				labelAddress=$(($labelAddress - $overlayAddress - 1))
+				pre+="$labelAddress$tmp"
+				;;
+			relative)
+				labelAddress=$(($labelAddress - $address))
+				# Take the absolute value, by dropping any minus sign.
+				labelAddress=${labelAddress#-}
+				pre+="$labelAddress$tmp"
+				;;
+			*)
+				printf >&2 "Error: %s at line %s:\n%s\n" \
+					"Unknown @-reference type" "$line_no" "$line"
+				return 1
+				;;
+		esac
+	done
+	line=$pre
+	return 0
+}
+
+# -------- END: AT-REFERENCES --------
+
 # -------- START: PROGRAM TEXT HANDLING --------
 
 # Add a line to the $program variable. (Assumes it's empty or has a newline.)
@@ -463,6 +586,12 @@ runPass1() {
 				address=$(($address + 1))
 				;;
 			NILLIST)
+				if ! replaceAtReferences
+				then
+					printf >&2 "Note: For NILLIST, %s\n" \
+						"only preceding identifiers can be used."
+					return 1
+				fi
 				if ! [[ "$line" =~ ^"NILLIST "(.+)$ ]]; then
 					printf >&2 "Error: %s for NILLIST at line %s:\n%s\n" \
 						"Missing argument" "$line_no" "$line"
@@ -534,10 +663,7 @@ runPass2() {
 	local line_no=0
 	local address=0
 	local currentOverlay=
-	local line comment tmp pre refType refIdentifier refLocalTo ret optional
-	local overlayAddress labelAddress labelOverlay formattedNumber
-	local atIdentifierRegex="^($identifierRegex)([: ].*)?$"
-	local atLocalToRegex="^:([*]?|$identifierRegex)( .*)?$"
+	local line comment tmp pre refType ret optional formattedNumber
 	# Reset the program text so we can add things back into it.
 	program=
 	while IFS= read -r -d $'\n' line
@@ -561,115 +687,10 @@ runPass2() {
 		fi
 		# This is safe because pass 1 ensures there's a single space there,
 		# unless at the start of the line, which we already handled above.
-		pre=${line%% //*}
+		line=${line%% //*}
 
 		# Handle @-references, replacing them with the actual values.
-		while tmp=${pre#*@} ; [ "$tmp" != "$pre" ]; do
-			pre=${pre%%@*}
-			if [ "${pre:(-1)}" != " " ]; then
-				printf >&2 "Error: %s at line %s (pass 2):\n%s\n" \
-					"@-reference must be preceded by space" "$line_no" "$line"
-				return 1
-			fi
-			refType=${tmp%%:*}
-			if [ "$refType" = "$tmp" ]; then
-				printf >&2 "Error: %s at line %s (pass 2):\n%s\n" \
-					"Invalid @-reference, missing colon" "$line_no" "$line"
-				return 1
-			fi
-			tmp=${tmp#*:}
-			if ! [[ "$tmp" =~ $atIdentifierRegex ]]; then
-				printf >&2 "Error: %s at line %s (pass 2):\n%s\n" \
-					"Invalid identifier in @-reference" "$line_no" "$line"
-				return 1
-			fi
-			refIdentifier=${BASH_REMATCH[1]}
-			tmp=${BASH_REMATCH[2]}
-
-			case "$refType" in
-				overlay)
-					if [ "${tmp:0:1}" = ":" ]; then
-						printf >&2 "Error: %s at line %s (pass 2):\n%s\n" \
-							"Extra part in overlay @-reference" "$line_no" "$line"
-						return 1
-					fi
-					if ! getOverlayAddress "$refIdentifier"
-					then
-						printf >&2 "Error: %s at line %s (pass 2):\n%s\n" \
-							"Unknown overlay in @-reference" "$line_no" "$line"
-						return 1
-					fi
-					pre+="$overlayAddress$tmp"
-					;;
-				disk)
-					refLocalTo="*"
-					;;&
-				local|relative)
-					refLocalTo=$currentOverlay
-					;;&
-				disk|local|relative)
-					if [[ "$tmp" =~ $atLocalToRegex ]]; then
-						refLocalTo=${BASH_REMATCH[1]}
-						tmp=${BASH_REMATCH[2]}
-					elif [ "${tmp:0:1}" = ":" ]; then
-						printf >&2 "Error: %s at line %s (pass 2):\n%s\n" \
-							"Invalid local-to identifier in @-reference" \
-							"$line_no" "$line"
-						return 1
-					fi
-					if [ "$refLocalTo" = "*" ]; then
-						getLabelAddress "$refIdentifier"
-						ret=$?
-					else
-						getLabelAddress "$refIdentifier" "$refLocalTo"
-						ret=$?
-					fi
-					if [ $ret -ne 0 ]; then
-						printf >&2 "Error: %s at line %s (pass 2):\n%s\n" \
-							"Unknown label in @-reference" "$line_no" "$line"
-						return 1
-					fi
-					;;&
-				disk)
-					pre+="$labelAddress$tmp"
-					;;
-				local)
-					if ! getLabelOverlay "$refIdentifier" "$labelAddress"
-					then
-						printf >&2 "Error: %s at line %s (pass 2):\n%s\n" \
-							"Unable to get overlay of label" "$line_no" "$line"
-						return 1
-					fi
-					# If the label is not in an overlay, then it is not local
-					# in any meaningful sense, since it's never overlay-loaded.
-					if [ "$labelOverlay" = "" ]; then
-						printf >&2 "Error: %s at line %s (pass 2):\n%s\n" \
-							"Local label must be in overlay" "$line_no" "$line"
-						return 1
-					fi
-					if ! getOverlayAddress "$labelOverlay"
-					then
-						printf >&2 "Error: %s at line %s (pass 2):\n%s\n" \
-							"Unknown overlay for label" "$line_no" "$line"
-						return 1
-					fi
-					labelAddress=$(($labelAddress - $overlayAddress - 1))
-					pre+="$labelAddress$tmp"
-					;;
-				relative)
-					labelAddress=$(($labelAddress - $address))
-					# Take the absolute value, by dropping any minus sign.
-					labelAddress=${labelAddress#-}
-					pre+="$labelAddress$tmp"
-					;;
-				*)
-					printf >&2 "Error: %s at line %s (pass 2):\n%s\n" \
-						"Unknown @-reference type" "$line_no" "$line"
-					return 1
-					;;
-			esac
-		done
-		line=$pre
+		replaceAtReferences || return 1
 
 		case "${line%% *}" in
 			DATAC|NIL|HLT|MOVI|MOVO|JMP|SETDATA|GETDATA|SET|IFJMP|PMOV|MATH)

@@ -157,12 +157,8 @@ constants, but this is still useful - especially when combined with
 @-expressions, which for the purposes of these expressions can usually be
 considered constants.
 
-There is one significant exception to that, and that's in an argument to the
-NILLIST instruction. The value of that parameter affects the value of the
-@-references (especially those coming after it), so it is processed during the
-first pass, before the values of the @-references are known - and therefore,
-@-references cannot be used in that argument, nor expressions that involve
-them. However, expressions that don't involve them can still be used there.
+Note that using expressions do not relax the restrictions on @-expressions in
+the argument for NILLIST, as they are still evaluated during the first pass.
 
 It is worth noting that the numbers and operations inside an expression are
 not restricted by the bit size of the parameter the expression is for while
@@ -372,6 +368,16 @@ colon, and a context specifier.
 
 At the moment, there are four types of @-references: overlay, disk, local and
 relative. All of these except the overlay type refer to label identifiers.
+
+With one exception, @-references can refer to identifiers that were created
+anywhere in the file. That exception is in the argument for NILLIST.
+
+In the argument for NILLIST, only identifiers that were created earlier in the
+file can be used, as that argument is processed during the first pass, before
+later identifiers are known. This is done because the value of that argument
+affects the location of every identifier that is created after that NILLIST.
+Accepting those identifiers would thus easily lead to cases where their actual
+addresses cannot be resolved, because they would depend on their own location.
 
 #### The "overlay" reference type
 
