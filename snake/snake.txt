@@ -1,7 +1,7 @@
 // R15 = 1
 // R14 : reserved by overlay loader: a MOVO instruction using register 1
-// R13 : snake head - index into snake tail history array
-// R12 : snake tail - index into snake tail history array
+// R13 : snake head - address inside snake tail history array
+// R12 : snake tail - address inside snake tail history array
 // R11 : number of snake segments to add (by not removing the tail)
 // R10 : size of snake tail history array (max size, not current length)
 // R9  : address of snake tail history array
@@ -58,8 +58,8 @@ MOVI  9 @local:history_addr // R9 = address of history array
 MOVI 10 @local:history_size // R10 = max history size
 MATH 15 11 5                // R11 = 1 : add one segment immediately
 MATH 15 11 0                // R11++   : no, add two segments immediately
-MATH 12 12 1                // R12 = 0 : tail is at index=0
-MATH 13 13 1                // R13 = 0 : head is at index=0
+MATH  9 12 5                // R12 = R9 : tail is at first element of array
+MATH  9 13 5                // R13 = R9 : head is at first element of array
 
 SETDATA 1 3 9 4 // Save head into array
 
@@ -113,11 +113,10 @@ MATH 15 11 1 // R11-- : decrement number of segments to add
 JMP 1 @local:skip_erasing
 
 erase_segment:
-MATH  9 12 0      // R12 += R9 : add address of array to its index
 GETDATA 1 3 12    // R1 = read(disk, R12) : load tail position from history
-MATH  9 12 1      // R12 -= R9 : remove address of array from its index
 MATH 15 12 0      // R12++ : increment history position of last tail segment
-MATH 10 12 4      // R12 %= R10 : wrap around index of history
+MATH 10 12 4      // R12 %= R10 : wrap around size of history
+MATH  9 12 0      // R12 += R9 : re-add address of array to its index
 PMOV 14 1 3 4 3 0 // R1[0:1] = R14[3:4] : set color for old pos to bg-color
 SETDATA 0 3 1     // erase old position
 skip_erasing:
@@ -131,10 +130,9 @@ JMP 3 9
 OVERLAY save_head_and_check_hit
 
 MATH 15 13 0     // R13++ : increment history position of head segment
-MATH 10 13 4     // R13 %= R10 : wrap around index of history
-MATH  9 13 0     // R13 += R9 : add address of array to its index
+MATH 10 13 4     // R13 %= R10 : wrap around size of history
+MATH  9 13 0     // R13 += R9 : re-add address of array to its index
 SETDATA 1 3 13 4 // write current position to head of history array
-MATH  9 13 1     // R13 -= R9 : remove address of array from its index
 
 PMOV 15 6 0 29 2 1    // R6[2:31] = 0 : clear all but color
 PMOV  6 3 0 31 2 0    // R3 = R6(shifted) : copy color for comparison
@@ -172,19 +170,17 @@ IFJMP 1 @local:repeat 1 // if R2 != R3 then it was not pressed yet, so loop
 MATH 13 3 5 // R3 = R13 : snake head
 MATH 12 2 5 // R2 = R12 : snake tail
 tail_loop:
-	MATH  9 2 0        // R2 += R9 : add address of array to its index
 	GETDATA 1 3 2      // R1 = read(disk, R2) : load tail position from history
-	MATH  9 2 1        // R2 -= R9 : remove address of array from its index
 	PMOV 14 1 3 4 3 0  // R1[0:1] = R14[3:4] : set color for old pos to bg-color
 	SETDATA 0 3 1      // erase old position
 	IFJMP 1 @local:tail_done 0 // if tail == head then we're done
 	MATH 15 2 0        // R2++ : increment history position of last tail segment
-	MATH 10 2 4        // R2 %= R10 : wrap around index of history
+	MATH 10 2 4        // R2 %= R10 : wrap around size of history
+	MATH  9 2 0        // R2 += R9 : re-add address of array to its index
 JMP 1 @local:tail_loop // loop back up for next tail segment
 tail_done:
 
-MATH 12 12 1 // R12 = 0 : reset tail position index
-MATH 13 13 1 // R13 = 0 : reset head position index
+MATH 13 12 5 // R12 = R13 : reset tail position address to that of the head
 
 MATH 1 6 5 // R6 = R1 : save head pixel so we don't need to re-load it
 
@@ -218,7 +214,7 @@ PMOV 11 5 30 31 0 0     // R5[offset] = 0b10 : set starting direction
 
 SETDATA 0 0 0b01_0000_000... // reset status pixel to white
 
-SETDATA 1 3 9 4 // save head position to history
+SETDATA 1 3 13 4 // save head position to history
 
 SETDATA 0 3 4 // draw head
 
@@ -276,8 +272,9 @@ DATAC 0b00_0001_000... // 0b10 : d : right
 DATAC 0b11_1111_111... // 0b11 : w : up
 
 
-// TODO: align this array to a multiple of its size, and keep addresses in the
-// registers, to speed things up by needing fewer instructions.
+// Align the tail history array to an address that is a multiple of its size.
+align_tail_history: NILLIST ( ( 84 - @disk:align_tail_history % 84 ) % 84 )
+
 snake_tail_history:
 NILLIST ( ( 16 - 2 ) * ( 8 - 2 ) )
 snake_tail_history_end:

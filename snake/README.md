@@ -10,9 +10,6 @@ ROM (as bootloader).
 The game is awkwardly slow, and not quite bug-free, but generally works, and
 is playable given some patience.
 
-I do have some ideas for speed-ups, but there are limits to what can be done
-without breaking the game or switching to another Senbir mode.
-
 ## Controls
 
 The game is controlled using the keyboard.
