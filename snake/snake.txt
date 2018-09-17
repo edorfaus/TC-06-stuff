@@ -100,9 +100,7 @@ GETDATA 1 3 5 // R1 = read(disk, R5) : load direction value
 
 MATH 1 4 0 // R4 += R1 : update position by adding direction value to it
 
-PMOV 4 1 2 31 2 0 // R1[0:29] = R4[2:31] : set R1 to screen address of new pos
-GETDATA 0 3 1     // R1 = current pixel in new position
-MATH 1 6 5        // R6 = R1 : keep old pixel for later
+PMOV 4 6 2 31 2 0 // R6[0:29] = R4[2:31] : set R6 to screen address of new pos
 
 MATH 2 2 1                     // R2 = 0
 MATH 11 3 5                    // R3 = R11
@@ -121,7 +119,11 @@ PMOV 14 1 3 4 3 0 // R1[0:1] = R14[3:4] : set color for old pos to bg-color
 SETDATA 0 3 1     // erase old position
 skip_erasing:
 
+GETDATA 0 3 6 // R1 = old pixel from the new position
+
 SETDATA 0 3 4 // draw new position
+
+MATH 1 6 5    // R6 = R1 : keep old pixel for later
 
 SET 2 3 @overlay:save_head_and_check_hit
 JMP 3 9
