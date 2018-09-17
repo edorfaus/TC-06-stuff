@@ -5,7 +5,7 @@
 // R11 : number of snake segments to add (by not removing the tail)
 // R10 : size of snake tail history array (max size, not current length)
 // R9  : address of snake tail history array
-// R5  : direction we are currently moving, encoded as index of direction array
+// R5  : direction we are currently moving, encoded as address of array element
 // R4  : the current position (and color) of the snake's head (pixel encoding)
 
 // Note: this program assumes a disk size of no more than 256 words, so that
@@ -19,8 +19,8 @@ MATH 7 7 1 // R7 = 0 : initialization for updating only parts of it
 MATH 3 3 1 // R3 = 0 : initialization for updating only parts of it
 MATH 2 2 1 // R2 = 0 : initialization for updating only parts of it
 next:
- GETDATA 1 3 6         // R1 = read(disk, R5) : load next step
- MATH 15 6 0           // R5++ : update address
+ GETDATA 1 3 6         // R1 = read(disk, R6) : load next step
+ MATH 15 6 0           // R6++ : update address
  PMOV 1 2  0  8  0 0   // R2[0:8] = R1[ 0: 8] : set start pixel
  PMOV 1 3  9 17  9 0   // R3[0:8] = R1[ 9:17] : set end pixel
  IFJMP 1 @local:done 0 // jump to done if R2 == R3
@@ -69,7 +69,7 @@ SET 2 3 @overlay:make_food
 JMP 3 9
 
 start_pos: DATAC 0b00_0111_100...
-direction: DATAC 0b10
+direction: DATAC ( @disk:directions_array | 0b10 )
 history_addr: DATAC @disk:snake_tail_history
 history_size: DATAC ( @disk:snake_tail_history_end - @disk:snake_tail_history )
 
@@ -96,10 +96,7 @@ JMP 3 9
 
 OVERLAY do_movement
 
-// TODO: remove these two by aligning the array and having address in R5
-SET 2 3 @disk:directions_array // R2 = address of array
-MATH 5 2 0                     // R2 += R5 : address of array[index]
-GETDATA 1 3 2                  // R1 = read(disk, R2) : load direction value
+GETDATA 1 3 5 // R1 = read(disk, R5) : load direction value
 
 MATH 1 4 0 // R4 += R1 : update position by adding direction value to it
 
@@ -129,16 +126,6 @@ SETDATA 0 3 4 // draw new position
 
 SET 2 3 @overlay:save_head_and_check_hit
 JMP 3 9
-
-END_OVERLAY
-
-// BEWARE: the indexes in this array are based on the ASCII values of w,a,s,d
-// in a specific way, to make it faster to generate the index from the key.
-directions_array:
-DATAC 0b11_1111_000... // 0b00 : a : left
-DATAC 0b00_0000_001... // 0b01 : s : down
-DATAC 0b00_0001_000... // 0b10 : d : right
-DATAC 0b11_1111_111... // 0b11 : w : up
 
 
 OVERLAY save_head_and_check_hit
@@ -226,8 +213,8 @@ SETDATA 0 3 6       // draw pixel as white (to fix the border)
 
 not_white:
 MOVI 4 @local:start_pos // R4 = start position (and color)
-SET  5 3 0b10           // R5 = 0b10 : set starting direction
 SET 11 3 2              // R11 = 2 : add two segments immediately
+PMOV 11 5 30 31 0 0     // R5[offset] = 0b10 : set starting direction
 
 SETDATA 0 0 0b01_0000_000... // reset status pixel to white
 
@@ -268,13 +255,26 @@ IFJMP 1 @local:set_direction 0 // if this key pressed, goto set_direction
 JMP 1 @local:done
 
 set_direction:
-PMOV 6 5 29 30 1 1  // R5 = new direction array index (taken from key)
+PMOV 6 5 29 30 1 1  // R5[offset] = new direction (taken from key)
 
 done:
 SET 2 3 @overlay:do_movement
 JMP 3 9
 
 END_OVERLAY
+
+
+// Align the directions array to an address that is a multiple of 4.
+align_directions: NILLIST ( ( 4 - @disk:align_directions % 4 ) % 4 )
+
+// BEWARE: the indexes in this array are based on the ASCII values of w,a,s,d
+// in a specific way, to make it faster to generate the index from the key.
+directions_array:
+DATAC 0b11_1111_000... // 0b00 : a : left
+DATAC 0b00_0000_001... // 0b01 : s : down
+DATAC 0b00_0001_000... // 0b10 : d : right
+DATAC 0b11_1111_111... // 0b11 : w : up
+
 
 // TODO: align this array to a multiple of its size, and keep addresses in the
 // registers, to speed things up by needing fewer instructions.
