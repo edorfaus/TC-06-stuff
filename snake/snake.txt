@@ -1,0 +1,283 @@
+// R15 = 1
+// R14 : reserved by overlay loader: a MOVO instruction using register 1
+// R13 : snake head - index into snake tail history array
+// R12 : snake tail - index into snake tail history array
+// R11 : number of snake segments to add (by not removing the tail)
+// R10 : size of snake tail history array (max size, not current length)
+// R9  : address of snake tail history array
+// R5  : direction we are currently moving, encoded as index of direction array
+// R4  : the current position (and color) of the snake's head (pixel encoding)
+
+// Note: this program assumes a disk size of no more than 256 words, so that
+// disk addresses always have zeroes in all but the low byte.
+// This was done to minimize the size of the overlays and speed things up.
+
+OVERLAY draw_window
+
+MOVI 6 @local:data_addr // R6 = ram[..] : load address of data to be drawn
+MATH 7 7 1 // R7 = 0 : initialization for updating only parts of it
+MATH 3 3 1 // R3 = 0 : initialization for updating only parts of it
+MATH 2 2 1 // R2 = 0 : initialization for updating only parts of it
+next:
+ GETDATA 1 3 6         // R1 = read(disk, R5) : load next step
+ MATH 15 6 0           // R5++ : update address
+ PMOV 1 2  0  8  0 0   // R2[0:8] = R1[ 0: 8] : set start pixel
+ PMOV 1 3  9 17  9 0   // R3[0:8] = R1[ 9:17] : set end pixel
+ IFJMP 1 @local:done 0 // jump to done if R2 == R3
+ PMOV 1 7 18 26 18 0   // R7[0:8] = R1[18:26] : set position increment
+ loop:
+  SETDATA 0 3 2         // Draw a pixel from R2
+  MATH 7 2 0            // R2 += R7 : increment position
+  IFJMP 1 @local:loop 1 // jump to loop if R2 != R3
+ JMP 1 @local:next      // jump to next otherwise
+
+done:
+MOVI 2 @local:next_overlay
+JMP 3 9
+
+data_addr: DATAC @disk:draw_window_data
+next_overlay: DATAC @overlay:init_game
+
+END_OVERLAY
+
+draw_window_data:
+// Start pixel (is drawn), stop pixel (is not drawn), position increment
+DATAC 0b_10_0001_001___10_1110_111___00_0000_001... // Main area fill, TL-to-BR
+DATAC 0b_01_1110_111___00_1111_111___11_1111_000... // Bottom row, R-to-L
+DATAC 0b_01_0000_110___00_1111_111___11_1111_111... // Left column, B-to-T
+DATAC 0b_01_0001_000___10_0000_000___00_0001_000... // Top row, L-to-R
+DATAC 0b_01_1111_001___10_0000_000___00_0000_001... // Right column, T-to-B
+NIL // End of list
+
+
+OVERLAY init_game
+
+MOVI  4 @local:start_pos    // R4 = start position (and color)
+MOVI  5 @local:direction    // R5 = direction
+MOVI  9 @local:history_addr // R9 = address of history array
+MOVI 10 @local:history_size // R10 = max history size
+MATH 15 11 5                // R11 = 1 : add one segment immediately
+MATH 15 11 0                // R11++   : no, add two segments immediately
+MATH 12 12 1                // R12 = 0 : tail is at index=0
+MATH 13 13 1                // R13 = 0 : head is at index=0
+
+SETDATA 1 3 9 4 // Save head into array
+
+SETDATA 0 3 4 // Draw current head pos
+
+SET 2 3 @overlay:make_food
+JMP 3 9
+
+start_pos: DATAC 0b00_0111_100...
+direction: DATAC 0b10
+history_addr: DATAC @disk:snake_tail_history
+history_size: DATAC ( @disk:snake_tail_history_end - @disk:snake_tail_history )
+
+
+OVERLAY make_food
+
+SET 2 3 14 // R2 = 14
+MATH 2 2 6 // R2 = random number within 0-13 : X pos - 1 of food
+SET 3 3 6  // R3 = 6
+MATH 3 3 6 // R3 = random number within 0-5 : Y pos -1 of food
+
+MATH 15 2 0 // R2++ : X pos of food
+MATH 15 3 0 // R3++ : Y pos of foox
+
+PMOV  3 3  0 31 23 0 // R2 = .. : move Y pos into place
+PMOV  2 3 28 31 26 0 // R2 = .. : move X pos into place
+PMOV 14 3  2  3  2 0 // R2 = .. : move color into place
+
+SETDATA 0 3 3 // Draw food pixel
+
+SET 2 3 @overlay:check_keys
+JMP 3 9
+
+
+OVERLAY do_movement
+
+// TODO: remove these two by aligning the array and having address in R5
+SET 2 3 @disk:directions_array // R2 = address of array
+MATH 5 2 0                     // R2 += R5 : address of array[index]
+GETDATA 1 3 2                  // R1 = read(disk, R2) : load direction value
+
+MATH 1 4 0 // R4 += R1 : update position by adding direction value to it
+
+PMOV 4 1 2 31 2 0 // R1[0:29] = R4[2:31] : set R1 to screen address of new pos
+GETDATA 0 3 1     // R1 = current pixel in new position
+MATH 1 6 5        // R6 = R1 : keep old pixel for later
+
+MATH 2 2 1                     // R2 = 0
+MATH 11 3 5                    // R3 = R11
+IFJMP 1 @local:erase_segment 0 // if R11 == 0 then goto erase_segment
+
+// We have segments to add to the tail
+MATH 15 11 1 // R11-- : decrement number of segments to add
+JMP 1 @local:skip_erasing
+
+erase_segment:
+MATH  9 12 0      // R12 += R9 : add address of array to its index
+GETDATA 1 3 12    // R1 = read(disk, R12) : load tail position from history
+MATH  9 12 1      // R12 -= R9 : remove address of array from its index
+MATH 15 12 0      // R12++ : increment history position of last tail segment
+MATH 10 12 4      // R12 %= R10 : wrap around index of history
+PMOV 14 1 3 4 3 0 // R1[0:1] = R14[3:4] : set color for old pos to bg-color
+SETDATA 0 3 1     // erase old position
+skip_erasing:
+
+SETDATA 0 3 4 // draw new position
+
+SET 2 3 @overlay:save_head_and_check_hit
+JMP 3 9
+
+END_OVERLAY
+
+// BEWARE: the indexes in this array are based on the ASCII values of w,a,s,d
+// in a specific way, to make it faster to generate the index from the key.
+directions_array:
+DATAC 0b11_1111_000... // 0b00 : a : left
+DATAC 0b00_0000_001... // 0b01 : s : down
+DATAC 0b00_0001_000... // 0b10 : d : right
+DATAC 0b11_1111_111... // 0b11 : w : up
+
+
+OVERLAY save_head_and_check_hit
+
+MATH 15 13 0     // R13++ : increment history position of head segment
+MATH 10 13 4     // R13 %= R10 : wrap around index of history
+MATH  9 13 0     // R13 += R9 : add address of array to its index
+SETDATA 1 3 13 4 // write current position to head of history array
+MATH  9 13 1     // R13 -= R9 : remove address of array from its index
+
+PMOV 15 6 0 29 2 1    // R6[2:31] = 0 : clear all but color
+PMOV  6 3 0 31 2 0    // R3 = R6(shifted) : copy color for comparison
+SET 2 3 0b10          // R2 = 0b10 : the background color for comparison
+IFJMP 1 @local:done 0 // if old color was bg-color, goto done
+SET 2 3 0b11
+IFJMP 1 @local:food 0 // if old color was white, goto food
+
+// We did not hit food or empty space, so we must have crashed
+SET 2 3 @overlay:crashed
+JMP 3 9
+
+food:
+MATH 15 11 0 // R11++ : add a segment to the snake tail
+SET 2 3 @overlay:make_food
+JMP 3 9
+
+done:
+SET 2 3 @overlay:check_keys
+JMP 3 9
+
+
+OVERLAY crashed
+
+SETDATA 0 0 0b00_0000_000... // set status pixel to black to show crashed
+
+SET 2 3 0x72 // R2 = 'r'
+repeat:
+	GETDATA 2 0 0 // R1 = keyboard input
+	MATH 1 3 5    // R3 = R1 : for comparison
+IFJMP 1 @local:repeat 1 // if R2 != R3 then it was not pressed yet, so loop
+
+// r was pressed, so reset and restart
+
+MATH 13 3 5 // R3 = R13 : snake head
+MATH 12 2 5 // R2 = R12 : snake tail
+tail_loop:
+	MATH  9 2 0        // R2 += R9 : add address of array to its index
+	GETDATA 1 3 2      // R1 = read(disk, R2) : load tail position from history
+	MATH  9 2 1        // R2 -= R9 : remove address of array from its index
+	PMOV 14 1 3 4 3 0  // R1[0:1] = R14[3:4] : set color for old pos to bg-color
+	SETDATA 0 3 1      // erase old position
+	IFJMP 1 @local:tail_done 0 // if tail == head then we're done
+	MATH 15 2 0        // R2++ : increment history position of last tail segment
+	MATH 10 2 4        // R2 %= R10 : wrap around index of history
+JMP 1 @local:tail_loop // loop back up for next tail segment
+tail_done:
+
+MATH 12 12 1 // R12 = 0 : reset tail position index
+MATH 13 13 1 // R13 = 0 : reset head position index
+
+MATH 1 6 5 // R6 = R1 : save head pixel so we don't need to re-load it
+
+SET 2 3 @overlay:reset_part_2
+JMP 3 9
+
+
+OVERLAY reset_part_2
+
+MATH 2 2 1 // R2 = 0
+MATH 3 3 1 // R3 = 0
+
+PMOV 6 3 2 5 6 0            // R3[28:31] = R6[2:5] : copy Y position
+MOVI 7 @local:seven         // R7 = 7
+MATH 7 3 4                  // R3 %= R7 : mod-7 so that both 0 and 7 become 0
+IFJMP 1 @local:make_white 0 // if head-X is 0 or 15, goto make_white
+
+PMOV 6 3 2 5 6 0            // R3[28:31] = R6[2:5] : copy X position
+SET 7 3 15                  // R7 = 15
+MATH 7 3 4                  // R3 %= R7 : mod-15 so that both 0 and 15 become 0
+IFJMP 1 @local:not_white 1  // if head-X is not 0 or 15, goto not_white
+
+make_white:
+PMOV 15 6 30 31 2 1 // R6[0:1] = R15[30:31] : set color to 0b01
+SETDATA 0 3 6       // draw pixel as white (to fix the border)
+
+not_white:
+MOVI 4 @local:start_pos // R4 = start position (and color)
+SET  5 3 0b10           // R5 = 0b10 : set starting direction
+SET 11 3 2              // R11 = 2 : add two segments immediately
+
+SETDATA 0 0 0b01_0000_000... // reset status pixel to white
+
+SETDATA 1 3 9 4 // save head position to history
+
+SETDATA 0 3 4 // draw head
+
+SET 2 3 @overlay:check_keys
+JMP 3 9
+
+seven: DATAC 7
+start_pos: DATAC 0b00_0111_100...
+
+
+OVERLAY check_keys
+
+MATH 2 2 1 // R2 = 0
+
+GETDATA 2 0 0 // R1 = keyboard input
+keep_key:
+	MATH 1 6 5    // R6 = R1 : keep this key for later
+	GETDATA 2 0 0 // R1 = keyboard input
+	MATH 1 3 5    // R3 = R1 : for comparison
+IFJMP 1 @local:keep_key 1 // if R2 != R3 then another key was pressed, so loop
+
+// R6 is now the last key that was pressed
+MATH 6 3 5 // R3 = R6 : for comparison
+
+SET 2 3 0b01110111             // R2 = 'w' (up)
+IFJMP 1 @local:set_direction 0 // if this key pressed, goto set_direction
+SET 2 3 0b01100001             // R2 = 'a' (left)
+IFJMP 1 @local:set_direction 0 // if this key pressed, goto set_direction
+SET 2 3 0b01110011             // R2 = 's' (down)
+IFJMP 1 @local:set_direction 0 // if this key pressed, goto set_direction
+SET 2 3 0b01100100             // R2 = 'd' (right)
+IFJMP 1 @local:set_direction 0 // if this key pressed, goto set_direction
+// Unknown key (or no key at all)
+JMP 1 @local:done
+
+set_direction:
+PMOV 6 5 29 30 1 1  // R5 = new direction array index (taken from key)
+
+done:
+SET 2 3 @overlay:do_movement
+JMP 3 9
+
+END_OVERLAY
+
+// TODO: align this array to a multiple of its size, and keep addresses in the
+// registers, to speed things up by needing fewer instructions.
+snake_tail_history:
+NILLIST ( ( 16 - 2 ) * ( 8 - 2 ) )
+snake_tail_history_end:
