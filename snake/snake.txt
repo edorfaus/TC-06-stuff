@@ -197,7 +197,7 @@ OVERLAY reset_part_2
 MATH 2 2 1 // R2 = 0
 MATH 3 3 1 // R3 = 0
 
-PMOV 6 3 2 5 6 0            // R3[28:31] = R6[2:5] : copy Y position
+PMOV 6 3 6 8 9 0            // R3[29:31] = R6[6:8] : copy Y position
 MOVI 7 @local:seven         // R7 = 7
 MATH 7 3 4                  // R3 %= R7 : mod-7 so that both 0 and 7 become 0
 IFJMP 1 @local:make_white 0 // if head-X is 0 or 15, goto make_white
