@@ -514,7 +514,19 @@ endCurrentOverlay() {
 	# The previous address is the last address of the current overlay, so set
 	# that overlay's end address (in its header DATAC) to that address.
 	program=${program//@overlayEnd/$endAddress}
-	addProgramLine "// Overlay $currentOverlay ended at disk address $endAddress"
+
+	local overlayAddress
+	if ! getOverlayAddress "$currentOverlay"
+	then
+		printf >&2 "Internal error: %s at line %s: %s\n" \
+			"Current overlay is unknown" "$line_no" "$currentOverlay"
+		return 1
+	fi
+	local overlaySize=$(($endAddress - $overlayAddress))
+	local commentText="// Overlay $currentOverlay ended at disk address"
+	commentText+=" $endAddress, needing $overlaySize words of memory"
+	addProgramLine "$commentText"
+
 	# Mark the current address as not being in this overlay anymore.
 	endOverlay $address
 	# Clear the current overlay.
@@ -630,7 +642,7 @@ runPass1() {
 					return 1
 				fi
 				tmp=${BASH_REMATCH[1]}
-				endCurrentOverlay
+				endCurrentOverlay || return 1
 				currentOverlay=$tmp
 				addOverlay "$currentOverlay" "$address" || return 1
 				addProgramLine "// Overlay $tmp started at disk address $address"
@@ -647,7 +659,7 @@ runPass1() {
 						"No overlay to end" "$line_no"
 					return 1
 				fi
-				endCurrentOverlay
+				endCurrentOverlay || return 1
 				;;
 			*)
 				printf >&2 "Error: %s at line %s:\n%s\n" \
@@ -655,7 +667,7 @@ runPass1() {
 				return 1
 		esac
 	done
-	endCurrentOverlay
+	endCurrentOverlay || return 1
 }
 
 # -------- END: PASS 1 --------
