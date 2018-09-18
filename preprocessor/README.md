@@ -11,10 +11,6 @@ should be the only dependency to make this work.
 This file primarily describes the language that the preprocessor understands,
 or at least the parts that are not already in Senbir's assembly language.
 
-*Note:* Known bug: The current version of the script sometimes uses the wrong
-line numbers in its error messages. Fixing this is on the TODO list, but in
-the meantime, be aware that you may have to look around it to find the line.
-
 *Note:* When this file talks about an "identifier", it means a string that is
 used to identify something, and which consists of only US-ASCII letters,
 digits and/or underscores, and that starts with a letter or underscore.

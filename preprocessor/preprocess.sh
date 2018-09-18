@@ -42,6 +42,9 @@ labels=" "
 # Used to hold the text of the program being preprocessed.
 program=
 
+# Used to hold the line number of the source line for each program line.
+source_line_numbers=()
+
 # -------- END: GLOBALS --------
 
 # -------- START: OVERLAY HANDLING --------
@@ -261,8 +264,10 @@ replaceAtReferences() {
 # -------- START: PROGRAM TEXT HANDLING --------
 
 # Add a line to the $program variable. (Assumes it's empty or has a newline.)
+# Uses the $line_no variable to know the original source line number.
 addProgramLine() {
 	program+="$1${2:+ $2}"$'\n'
+	source_line_numbers+=($line_no)
 }
 
 # -------- END: PROGRAM TEXT HANDLING --------
@@ -659,16 +664,18 @@ runPass1() {
 
 # Pass 2: Insert the actual addresses of overlays, labels, etc.
 runPass2() {
-	# TODO: Deal with the line numbers no longer matching up after pass 1.
-	local line_no=0
+	local line_index=0 line_no
 	local address=0
 	local currentOverlay=
 	local line comment tmp pre refType ret optional formattedNumber
+	local old_line_numbers=("${source_line_numbers[@]}")
 	# Reset the program text so we can add things back into it.
 	program=
+	source_line_numbers=()
 	while IFS= read -r -d $'\n' line
 	do
-		line_no=$(($line_no + 1))
+		line_no=${old_line_numbers[$line_index]}
+		line_index=$(($line_index + 1))
 
 		# If this line is a pure comment, then it's fine as-is.
 		if [ "${line:0:2}" = "//" ]; then
@@ -784,7 +791,7 @@ runPass2() {
 				address=$(($address + $tmp))
 				;;
 			*)
-				printf >&2 "Error: %s at line %s (pass 2):\n%s\n" \
+				printf >&2 "Error: %s at line %s:\n%s\n" \
 					"Unknown instruction" "$line_no" "$line"
 				return 1
 		esac
