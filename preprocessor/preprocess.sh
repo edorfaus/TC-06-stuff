@@ -539,7 +539,7 @@ runPass1() {
 	local address=0
 	local currentOverlay=
 	local labelRegex="^($identifierRegex)[[:space:]]*:[[:space:]]*(.*)\$"
-	local line comment tmp formattedNumber
+	local line comment tmp formattedNumber overlayAddress localAddress
 	while IFS= read -r line
 	do
 		line_no=$(($line_no + 1))
@@ -571,7 +571,18 @@ runPass1() {
 			tmp="${BASH_REMATCH[1]}"
 			line="${BASH_REMATCH[2]}"
 			addLabel "$tmp" "$address" "$currentOverlay" || return 1
-			addProgramLine "// Label $tmp found at disk address $address"
+			comment="// Label $tmp found at line $line_no: disk address $address"
+			if [ "$currentOverlay" != "" ]; then
+				if ! getOverlayAddress "$currentOverlay"
+				then
+					printf >&2 "Internal error: %s at line %s: %s\n" \
+						"Current overlay is unknown" "$line_no" "$currentOverlay"
+					return 1
+				fi
+				localAddress=$(($address - $overlayAddress - 1))
+				comment+=", local $localAddress"
+			fi
+			addProgramLine "$comment"
 		done
 		if [ "$line" = "" ]; then
 			# Line only contained a label, nothing else
