@@ -65,7 +65,7 @@ getOverlayAddress() {
 addOverlay() {
 	if [[ "${overlayList["$1"]}" != "" ]];
 	then
-		printf >&2 "Error: Duplicate overlay: %s at %s and %s\n" \
+		printf >&2 "Error: Duplicate overlay: %s at disk address %s and %s\n" \
 			"$1" "${overlayList["$1"]}" "$2"
 		return 1
 	fi
@@ -128,8 +128,8 @@ addLabel() {
 	local labelAddress
 	if getLabelAddress "$1" "$3"
 	then
-		printf >&2 "Error: Duplicate label: %s at %s and %s in overlay %s\n" \
-			"$1" "$labelAddress" "$2" "$3"
+		printf >&2 "Error: %s: %s at disk address %s and %s in overlay %s\n" \
+			"Duplicate label" "$1" "$labelAddress" "$2" "$3"
 		return 1
 	fi
 	labels+="$1=$2:$3 "
@@ -514,7 +514,7 @@ endCurrentOverlay() {
 	# The previous address is the last address of the current overlay, so set
 	# that overlay's end address (in its header DATAC) to that address.
 	program=${program//@overlayEnd/$endAddress}
-	addProgramLine "// Overlay $currentOverlay ended at address $endAddress"
+	addProgramLine "// Overlay $currentOverlay ended at disk address $endAddress"
 	# Mark the current address as not being in this overlay anymore.
 	endOverlay $address
 	# Clear the current overlay.
@@ -559,7 +559,7 @@ runPass1() {
 			tmp="${BASH_REMATCH[1]}"
 			line="${BASH_REMATCH[2]}"
 			addLabel "$tmp" "$address" "$currentOverlay" || return 1
-			addProgramLine "// Label $tmp found at address $address"
+			addProgramLine "// Label $tmp found at disk address $address"
 		done
 		if [ "$line" = "" ]; then
 			# Line only contained a label, nothing else
@@ -633,12 +633,12 @@ runPass1() {
 				endCurrentOverlay
 				currentOverlay=$tmp
 				addOverlay "$currentOverlay" "$address" || return 1
-				addProgramLine "// Overlay $tmp started at address $address"
+				addProgramLine "// Overlay $tmp started at disk address $address"
 				if [[ "$comment" != "" ]]; then
 					addProgramLine "$comment"
 				fi
 				# Add the overlay-end-address line that the loader expects.
-				addProgramLine "DATAC @overlayEnd // End address for overlay"
+				addProgramLine "DATAC @overlayEnd // End disk address for overlay"
 				address=$(($address + 1))
 				;;
 			END_OVERLAY)
