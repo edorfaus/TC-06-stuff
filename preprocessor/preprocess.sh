@@ -839,12 +839,18 @@ fail() {
 
 while [ $# -gt 0 ]; do
 	case "$1" in
-		-o|--output)
+		-o*|--output|--output=*)
 			[ "$outFile" != "" ] && fail "Duplicate -o option"
 			[ $noOutput -ne 0 ] && fail "Cannot combine -n and -o"
-			[ "$2" = "" ] && fail "Invalid output filename"
-			outFile=$2;
-			shift
+			if [ "$1" = "-o" -o "$1" = "--output" ]; then
+				outFile="$2"
+				shift
+			elif [ "${1:0:2}" = "-o" ]; then
+				outFile=${1:2}
+			else # --output=
+				outFile=${1:9}
+			fi
+			[ "$outFile" = "" ] && fail "Invalid output filename"
 			;;
 		-n|--no-output)
 			[ "$outFile" != "" ] && fail "Cannot combine -o and -n"
