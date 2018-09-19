@@ -691,6 +691,7 @@ runPass2() {
 	local address=0
 	local currentOverlay=
 	local line comment tmp pre refType ret optional formattedNumber
+	local overlayAddress localAddress
 	local old_line_numbers=("${source_line_numbers[@]}")
 	# Reset the program text so we can add things back into it.
 	program=
@@ -798,6 +799,31 @@ runPass2() {
 						"Too many arguments" "$line_no" "$line"
 					return 1
 				fi
+				if [ $doLineInfo -ne 0 ]; then
+					tmp=
+					if [ ${lineInfo[line]} -ne 0 ]; then
+						tmp+="${tmp:+,} line $line_no"
+					fi
+					if [ ${lineInfo[disk]} -ne 0 ]; then
+						tmp+="${tmp:+,} disk $address"
+					fi
+					if [ ${lineInfo[memory]} -ne 0 -a "$currentOverlay" != "" ]; then
+						if ! getOverlayAddress "$currentOverlay"
+						then
+							printf >&2 "Internal error: %s at line %s: %s\n" \
+								"Current overlay is unknown" "$line_no" \
+								"$currentOverlay"
+							return 1
+						fi
+						if [ $address -gt $overlayAddress ]; then
+							localAddress=$(($address - $overlayAddress - 1))
+							tmp+="${tmp:+,} memory $localAddress"
+						fi
+					fi
+					if [ "$tmp" != "" ]; then
+						comment="${comment:-//}${comment:+ |}$tmp"
+					fi
+				fi
 				addProgramLine "$pre" "$comment"
 				address=$(($address + 1))
 				;;
@@ -809,9 +835,33 @@ runPass2() {
 						"Bad NILLIST" "$line_no" "$line"
 					return 1
 				fi
-				tmp="${BASH_REMATCH[1]}"
+				ret="${BASH_REMATCH[1]}"
+				if [ $doLineInfo -ne 0 ]; then
+					tmp=
+					if [ ${lineInfo[line]} -ne 0 ]; then
+						tmp+="${tmp:+,} line $line_no"
+					fi
+					if [ ${lineInfo[disk]} -ne 0 ]; then
+						tmp+="${tmp:+,} disk $address-$(($address + $ret - 1))"
+					fi
+					if [ ${lineInfo[memory]} -ne 0 -a "$currentOverlay" != "" ]; then
+						if ! getOverlayAddress "$currentOverlay"
+						then
+							printf >&2 "Internal error: %s at line %s: %s\n" \
+								"Current overlay is unknown" "$line_no" \
+								"$currentOverlay"
+							return 1
+						fi
+						localAddress=$(($address - $overlayAddress - 1))
+						tmp+="${tmp:+,} memory $localAddress"
+						tmp+="-$(($localAddress + $ret - 1))"
+					fi
+					if [ "$tmp" != "" ]; then
+						comment="${comment:-//}${comment:+ |}$tmp"
+					fi
+				fi
 				addProgramLine "$line" "$comment"
-				address=$(($address + $tmp))
+				address=$(($address + $ret))
 				;;
 			*)
 				printf >&2 "Error: %s at line %s:\n%s\n" \
@@ -831,6 +881,12 @@ noOutput=0
 onlyPass1=0
 showHelp=0
 debugLevel=0
+
+doLineInfo=0
+declare -A lineInfo
+lineInfo[line]=0
+lineInfo[disk]=0
+lineInfo[memory]=0
 
 fail() {
 	printf >&2 "Error: %s\n" "$1"
@@ -855,6 +911,40 @@ while [ $# -gt 0 ]; do
 		-n|--no-output)
 			[ "$outFile" != "" ] && fail "Cannot combine -o and -n"
 			noOutput=1
+			;;
+		-l*|--line-info|--line-info=*)
+			if [[ "$1" =~ ^(-l|--line-info|--line-info=)$ ]]; then
+				for tmp in "${!lineInfo[@]}" ; do
+					lineInfo["$tmp"]=1
+				done
+			elif [ "${1:0:2}" = "-l" ]; then
+				tmp=${1:2}
+				while [ "$tmp" != "" ]; do
+					case "${tmp:0:1}" in
+						l) lineInfo[line]=1 ;;
+						d) lineInfo[disk]=1 ;;
+						m) lineInfo[memory]=1 ;;
+						*) fail "Unknown type in -l option: ${tmp:0:1}" ;;
+					esac
+					tmp=${tmp:1}
+				done
+			else # --line-info=
+				tmp=${1:12}
+				while [ "$tmp" != "" ]; do
+					case "$tmp" in
+						l|line|l,*|line,*) lineInfo[line]=1 ;;
+						d|disk|d,*|disk,*) lineInfo[disk]=1 ;;
+						m|memory|m,*|memory,*) lineInfo[memory]=1 ;;
+						*) fail "Unknown type in --line-info option: $tmp" ;;
+					esac
+					if [ "${tmp#*,}" = "$tmp" ]; then
+						tmp=
+					else
+						tmp=${tmp#*,}
+					fi
+				done
+			fi
+			doLineInfo=1
 			;;
 		--pass1)
 			onlyPass1=1
@@ -906,6 +996,15 @@ if [ "$inFile" = "" ] || [ $showHelp -ne 0 ]; then
 		      If out-file is "-", writes the output to stdout anyway.
 		  -n, --no-output
 		      Do not write the output to either stdout or a file.
+		  -l, --line-info[=types]
+		      Add some extra info in a comment for each code line. The short
+		      form of this option only supports the short form of the types,
+		      with no separator, while the long form expects a comma-separated
+		      list. If no type is given, all three will be used.
+		      Known types:
+		          l, line  : line number in the original source of this line
+		          d, disk  : disk address where this instruction is stored
+		          m, memory: memory address of instruction when overlay loaded
 		  -h, --help
 		      Show this help.
 		  --pass1
