@@ -1,0 +1,343 @@
+// This is a version of Snake based on the disk runner rather than on overlays.
+
+// R15 = 1
+// R14 : Program counter (aka instruction pointer).
+// R13 : Target address for a matching IFJMP. Return address for draw_line.
+// R12 : Source address for load_data function. Tail end of tail history.
+// R11 : Head end of tail history.
+// R10 : Current direction
+// R9  : Current position
+// R8  : The size of the tail history (for modulo wrapping).
+// R7  : The value 14.
+// R6  : The value 6.
+// R5  : Number of segments to add to the snake.
+// R4  : Increment value for draw_loop. Base address of tail history.
+// R3  : Scratch space, for comparisons.
+// R2  : Scratch space, for comparisons.
+// R1  : Overwritten before every instruction, saved to mem[1] after.
+// R0  : Scratch space, various return values.
+
+OVERLAY runner
+
+JMP 1 @local:init // This is at RAM address 0 so normal bootloaders work.
+
+reg1: DATAC 1 // Used to initialize R15, and to store R1 at runtime.
+
+ifjmp:
+	MATH 13 14 5      // R14 = R13 : set instruction pointer.
+	JMP 1 @local:loop // Go back to start of loop to do the next instruction.
+
+JMP 1 @local:init // This is at RAM address 4 so the built-in bootloader works.
+
+loop:
+	GETDATA 1 3 14            // R1 = disk[R14] : read next instruction.
+	MATH 15 14 0              // R14++ : increment instruction pointer.
+	MOVO 1 @local:instruction // mem[..] = R1 : save instruction to RAM.
+	instruction: NIL          // The user-program instruction to be executed.
+	MOVO 1 @local:reg1        // mem[..] = R1 : save R1 in case it is needed.
+JMP 1 @local:loop             // Go back to start and do it all again.
+
+// Load some subroutines from disk into memory.
+// R2: start address
+// R3: end address
+// R1: scratch space
+load_subroutine:
+	GETDATA 1 3 2
+	load_subroutine_movo:
+	MOVO 1 @local:subroutine_area_start
+	MATH 15 2 0
+	MOVI 1 @local:load_subroutine_movo
+	MATH 15 1 0
+	MOVO 1 @local:load_subroutine_movo
+	IFJMP 1 @local:load_subroutine 1
+	JMP 1 @local:loop
+
+// Once initialization is done and the program starts, the rest can safely be
+// overwritten by subroutine code.
+subroutine_area_start:
+
+init:
+	MOVI 15 @local:reg1               // Initialize R15.
+	MOVI 14 @local:program_start_addr // Initialize R14 (the program counter).
+	JMP 1 @local:loop
+
+program_start_addr: DATAC @disk:program_start:runner // Used to initialize R14.
+
+program_start: END_OVERLAY
+
+MATH 2 2 1
+MATH 3 3 1
+SET 2 3 @disk:game_subroutine_code
+SET 3 3 @disk:game_subroutine_code_end
+
+SETDATA 0 0 0b10_0000_000... // Set a pixel to show we're active
+
+JMP 1 @local:load_subroutine:runner // Load the subroutine code into memory
+
+// Draw the window the game is played in
+
+draw_window:
+
+MATH 12 12 1                       // R12 = 0
+SET 12 3 @disk:window_drawing_data // R12 = addr of window drawing data
+
+MATH 2 2 1
+MATH 3 3 1
+MATH 4 4 1
+
+SETDATA 0 0 0b11_0000_000... // Show we're still active
+
+MATH 14 13 5 // Set address of the calling instruction (for returning to).
+SET 14 3 @disk:draw_line: // Call the draw_line function to clear the screen.
+SET 14 3 @disk:draw_line: // Call again, 4 more times, to draw the borders.
+SET 14 3 @disk:draw_line:
+SET 14 3 @disk:draw_line:
+SET 14 3 @disk:draw_line:
+
+// Initialize the game
+
+PMOV 15 10 0 31 6 1 // R10 = 0b00_0001_000... : snake direction: right
+
+MATH 9 9 1 // R9 = 0
+SET 9 0 0b11_0111_10 // R9 = 0b11_0111_100... : snake start position and color
+
+MATH 4 4 1
+MATH 6 6 1
+MATH 7 7 1
+MATH 8 8 1
+SET 4 3 @disk:snake_tail_history
+SET 6 3  6 // For making food
+SET 7 3 14 // For making food
+SET 8 3 ( @disk:snake_tail_history_end - @disk:snake_tail_history )
+MATH 4 11 5
+MATH 4 12 5
+
+MATH 15 5 5 // Start with adding one segment, plus the one from make_food.
+
+SETDATA 1 3 11 9 // Save start snake position into tail history
+
+SET 13 3 @disk:make_food: // Prepare for food making
+
+// Done with initialization, now run the actual game code
+
+SETDATA 0 0 0b01_0000_000... // Clear the status pixel
+
+SETDATA 0 3 9 // Draw the current position of the snake
+
+make_food: // Make food for the snake to eat
+
+	// Check if head is one behind tail, as then the screen is full.
+	MATH 11 2 5           // R2  = R11 : head of list
+	MATH 15 2 0           // R2++      : add one
+	MATH  8 2 4           // R2 %= R8  : mod size of list
+	MATH 12 3 5           // R3  = R12 : tail of list
+	MATH  8 3 4           // R3 %= R8  : mod size of list
+	SET 13 3 @disk:game_loop
+	IFJMP 1 @local:ifjmp:runner 0 // if R2 == R3 then screen is full
+
+	MATH 14 13 5
+	make_food_loop:
+		MATH 7 2 6 // R2 = random number within 0-13 : X pos of food
+		MATH 6 3 6 // R3 = random number within 0-5 : Y pos of food
+
+		MATH 15 2 0 // R2++ : X pos of food
+		MATH 15 3 0 // R3++ : Y pos of food
+
+		PMOV 3 3  0 31 25 0 // R3 = .. : move Y pos into place
+		PMOV 2 3 28 31 28 0 // R3 = .. : move X pos into place
+
+		GETDATA 0 3 3             // mem[1] = current pixel in that position
+		MOVI 2 @local:reg1:runner // R2 = mem[1] : load pixel value
+
+		PMOV 3 3 0 31 2 1         // shift R3 for color comparison
+
+	IFJMP 1 @local:ifjmp:runner 1 // if not the same: space was not free, try again
+
+	PMOV 1 3 0 1 0 0 // R3[color] = 0b10 : Set the color of the food pixel
+	SETDATA 0 3 3    // Draw food pixel
+
+	MATH 15 5 0 // Add a segment to the snake
+
+game_loop: // Main game loop
+
+	MATH 2 2 1 // R2 = 0 for comparisons
+
+	// Check for key pressed
+	GETDATA 2 0 0                  // mem[1] = keyboard input
+	MOVI 3 @local:reg1:runner      // Load into R3 for comparison
+	SET 13 3 @disk:handle_keypress // Address to go to if a key was pressed
+	IFJMP 1 @local:ifjmp:runner 1  // If R2 != R3 then a key was pressed
+
+	// Update position of snake
+
+	MATH 10 9 0 // R9 += R10 : update position by adding direction value to it
+
+	PMOV 9 0 2 31 2 0 // R0[0:29] = R9[2:31] : set screen address of new pos
+
+	SET 13 3 @disk:add_segment:
+	MATH 5 3 5
+	IFJMP 1 @local:ifjmp:runner 1
+
+		JMP 1 ( @disk:update_snake - @disk:game_subroutine_code + @local:subroutine_area_start:runner )
+
+		MATH 15 12 0 // R12++     : Add one to tail position
+		MATH  8 12 4 // R12 %= R8 : Modulo history size
+		MATH  4 12 0 // R12 += R4 : Add back in history address
+
+		SET 14 3 @disk:save_head:
+
+	add_segment:
+		JMP 1 ( @disk:update_snake_noerase - @disk:game_subroutine_code + @local:subroutine_area_start:runner )
+		MATH 15 5 1 // Subtract one from segments to add
+		// For the code below (already set like this in the other branch)
+		MATH 3 3 1
+
+	save_head:
+		MATH 15 11 0 // R11++     : Add one to head position
+		MATH  8 11 4 // R11 %= R8 : Modulo history size
+		MATH  4 11 0 // R11 += R4 : Add back in history address
+
+		SETDATA 1 3 11 9 // Save current position
+
+	// Check if the snake hit anything
+
+	PMOV 0 3 0 1 2 0 // R3 = color from R0
+	SET 13 3 @disk:game_loop:
+	IFJMP 1 @local:ifjmp:runner 0 // If color was background, then we're done
+
+	SET 2 3 0b10     // R2 = food color
+	SET 13 3 @disk:make_food:
+	IFJMP 1 @local:ifjmp:runner 0 // If color was food, then make some more
+
+// We apparently crashed.
+
+SETDATA 0 0 0b00_0000_000... // Set status pixel to show the crash
+
+SETDATA 2 0 0 // Clear keyboard buffer
+SET 2 3 0x72  // R2 = 'r'
+
+PMOV 15 0 0 31 1 1
+
+MATH 14 13 5  // Set loop location
+reset_loop:
+	// Blink the head so we can see where it is
+	MATH 0 9 0
+	SETDATA 0 3 9
+
+	// Check for reset key being pressed
+	GETDATA 2 0 0
+	MOVI 3 @local:reg1:runner
+	IFJMP 1 @local:ifjmp:runner 1 // Loop until user pressed 'r'
+
+SET 14 3 @disk:draw_window // Restart the game
+
+
+// R13: input+: the address of this function (will be overwritten)
+// R3 : input+: the key that was pressed (may be overwritten by another key)
+// R2 : input+: must be 0 (will be overwritten)
+// R10: output: new direction value (if direction changed, otherwise unchanged)
+// R0 : scratch space
+// Returns to game_loop
+handle_keypress:
+	MATH 3 0 5                    // R0 = R3 : Keep this key for later
+	GETDATA 2 0 0                 // mem[1] = keyboard input
+	MOVI 3 @local:reg1:runner     // Load into R3 for comparison
+	IFJMP 1 @local:ifjmp:runner 1 // if R2 != R3 then another key was pressed
+
+	// R0 is now the last key that was pressed
+	MATH 0 3 5 // R3 = R0 : for comparison
+
+	SET 13 3 @disk:keypress_set_direction // Set IFJMP target
+
+	SET 2 3 0b01110111            // R2 = 'w' (up)
+	IFJMP 1 @local:ifjmp:runner 0 // if this key pressed, change direction
+	SET 2 3 0b01100001            // R2 = 'a' (left)
+	IFJMP 1 @local:ifjmp:runner 0 // if this key pressed, change direction
+	SET 2 3 0b01110011            // R2 = 's' (down)
+	IFJMP 1 @local:ifjmp:runner 0 // if this key pressed, change direction
+	SET 2 3 0b01100100            // R2 = 'd' (right)
+	IFJMP 1 @local:ifjmp:runner 0 // if this key pressed, change direction
+
+	// Unknown key, no action
+
+	SET 14 3 @disk:game_loop: // Return to game loop
+
+keypress_set_direction:
+	SET 2 3 @disk:directions_array: // R2 = addr. of array
+	PMOV 0 2 29 30 1 1              // R2 += direction index (taken from key)
+	GETDATA 1 3 2                   // mem[1] = disk[R2] : load new direction
+	MOVI 10 @local:reg1:runner      // R10 = mem[1] : set new direction
+
+	SET 14 3 @disk:game_loop: // Return to game loop
+
+
+draw_line:
+	GETDATA 1 3 12
+	MOVI 0 @local:reg1:runner
+	MATH 15 12 0
+	PMOV 0 2  0  8  0 0           // R2[0:8] = R0[ 0: 8] : set start pixel
+	PMOV 0 3  9 17  9 0           // R3[0:8] = R0[ 9:17] : set end pixel
+	PMOV 0 4 18 26 18 0           // R4[0:8] = R0[18:26] : set position increment
+	// Draw this line
+	JMP 1 ( @disk:draw_loop - @disk:game_subroutine_code + @local:subroutine_area_start:runner )
+	MATH 15 13 0                  // R13++ : increment return address
+	MATH 13 14 5                  // Return to caller
+
+
+window_drawing_data:
+	DATAC 0b_00_0001_001___00_1110_111___00_0000_001... // Main area clear, TL-to-BR
+	DATAC 0b_01_0001_000___10_0000_000___00_0001_000... // Top row, L-to-R
+	DATAC 0b_01_1111_001___10_0000_000___00_0000_001... // Right column, T-to-B
+	DATAC 0b_01_1110_111___00_1111_111___11_1111_000... // Bottom row, R-to-L
+	DATAC 0b_01_0000_110___01_0000_000___11_1111_111... // Left column, B-to-T
+
+
+// Code for helper function to replace the subroutines faster.
+game_subroutine_code:
+
+// I here have room for up to 11 words of subroutine code.
+// Draw loop, uses these registers:
+// R2 : input+: start pixel (always drawn), incremented until equal to R3.
+// R3 : input : stop pixel (never drawn).
+// R4 : input : value to increment R2 by for each step.
+draw_loop:
+	SETDATA 0 3 2                 // Draw a pixel from R2.
+	MATH 4 2 0                    // R2 += R4 : Increment position.
+	IFJMP 2 @relative:draw_loop 1 // Jump to start if R2 != R3
+	JMP 1 @local:loop:runner      // Jump back into main runner loop.
+
+// R12: input : address of old position in history to be erased
+// R9 : input : new position to draw
+// R0 : input : screen address to get data from just before drawing
+// R0 : output: old screen data from that position
+update_snake:
+	GETDATA 1 3 12    // R1 = disk[R12] : load tail position
+	PMOV 15 1 0 1 0 0 // R1[0:1] = R15[0:1] : change its color to background
+	SETDATA 0 3 1     // Erase old position
+update_snake_noerase:
+	GETDATA 0 3 0 // Get old value of new position
+	SETDATA 0 3 9 // Draw new position
+	MATH 1 0 5    // Keep old value in R0
+	JMP 1 @local:loop:runner
+
+game_subroutine_code_end:
+
+
+// Align the tail history array to an address that is a multiple of its size.
+align_tail_history: NILLIST ( ( 84 - @disk:align_tail_history % 84 ) % 84 )
+
+snake_tail_history:
+NILLIST ( ( 16 - 2 ) * ( 8 - 2 ) )
+snake_tail_history_end:
+
+
+// Align the directions array to an address that is a multiple of 4.
+align_directions: NILLIST ( ( 4 - @disk:align_directions % 4 ) % 4 )
+
+// BEWARE: the indexes in this array are based on the ASCII values of w,a,s,d
+// in a specific way, to make it faster to generate the index from the key.
+directions_array:
+	DATAC 0b11_1111_000... // 0b00 : a : left
+	DATAC 0b00_0000_001... // 0b01 : s : down
+	DATAC 0b00_0001_000... // 0b10 : d : right
+	DATAC 0b11_1111_111... // 0b11 : w : up
