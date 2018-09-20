@@ -1,3 +1,4 @@
+// This bootloader can load a program of at most 26 words from disk.
 SET 15 3 1 // R15=1
 MOVI 14 27 // R14=(the instruction for save to ram)
 GETDATA 1 3 0 // R1=read(disk, 0)
