@@ -1,0 +1,43 @@
+// This is an alternative to using overlays - it runs code directly from the
+// disk without loading chunks of it into memory first. (Just one at a time.)
+
+// That does require the program to be written with this runner in mind, as
+// there are some limitations for things like JMP/IFJMP and GETDATA.
+
+// R15 = 1
+// R14 : Program counter (aka instruction pointer).
+// R13 : Target address for a matching IFJMP.
+// R1  : Overwritten before every instruction, saved to mem[1] after.
+
+OVERLAY runner
+
+JMP 1 @local:init // This is at RAM address 0 so normal bootloaders work.
+
+reg1: DATAC 1 // Used to initialize R15, and to store R1 at runtime.
+
+ifjmp:
+	MATH 13 14 5      // R14 = R13 : set instruction pointer.
+	JMP 1 @local:loop // Go back to the main loop to do the next instruction.
+
+JMP 1 @local:init // This is at RAM address 4 so the built-in bootloader works.
+
+loop:
+	GETDATA 1 3 14            // R1 = disk[R14] : read next instruction.
+	MATH 15 14 0              // R14++ : increment instruction pointer.
+	MOVO 1 @local:instruction // mem[..] = R1 : save instruction to RAM.
+	instruction: NIL          // The user-program instruction to be executed.
+	MOVO 1 @local:reg1        // mem[..] = R1 : save R1 in case it is needed.
+JMP 1 @local:loop             // Loop back to do the next instruction.
+
+// Once initialization is done and the program starts, the rest can safely be
+// overwritten by subroutine code.
+subroutine_area_start:
+
+init:
+	MOVI 15 @local:reg1               // Initialize R15.
+	MOVI 14 @local:program_start_addr // Initialize R14 (the program counter).
+	JMP 1 @local:loop
+
+program_start_addr: DATAC @disk:program_start:runner // Used to initialize R14.
+
+program_start: END_OVERLAY

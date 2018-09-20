@@ -1,0 +1,78 @@
+// This is a version of the line-drawing/increment-demo.txt program modified to
+// be run with the disk-runner instead of directly on the CPU as an overlay.
+
+OVERLAY runner
+
+JMP 1 @local:init // This is at RAM address 0 so normal bootloaders work.
+
+reg1: DATAC 1 // Used to initialize R15, and to store R1 at runtime.
+
+ifjmp:
+	MATH 13 14 5      // R14 = R13 : set instruction pointer.
+	JMP 1 @local:loop // Go back to the main loop to do the next instruction.
+
+JMP 1 @local:init // This is at RAM address 4 so the built-in bootloader works.
+
+loop:
+	GETDATA 1 3 14            // R1 = disk[R14] : read next instruction.
+	MATH 15 14 0              // R14++ : increment instruction pointer.
+	MOVO 1 @local:instruction // mem[..] = R1 : save instruction to RAM.
+	instruction: NIL          // The user-program instruction to be executed.
+	MOVO 1 @local:reg1        // mem[..] = R1 : save R1 in case it is needed.
+JMP 1 @local:loop             // Loop back to do the next instruction.
+
+init:
+	MOVI 15 @local:reg1               // Initialize R15.
+	MOVI 14 @local:program_start_addr // Initialize R14 (the program counter).
+	JMP 1 @local:loop
+
+program_start_addr: DATAC @disk:program_start:runner // Used to initialize R14.
+
+program_start: END_OVERLAY
+
+MATH 5 5 1 // R5 = 0
+SET 5 3 @disk:demo_data // R5 = .. : load address of data to be drawn
+MATH 4 4 1 // R4 = 0 : initialization for updating only parts of it
+MATH 3 3 1 // R3 = 0 : initialization for updating only parts of it
+MATH 2 2 1 // R2 = 0 : initialization for updating only parts of it
+next:
+	GETDATA 1 3 5             // R1 = read(disk, R5) : load next step
+	MOVI 6 @local:reg1:runner // R6 = R1
+	MATH 15 5 0               // R5++ : update address
+	PMOV 6 2  0  8  0 0       // R2[0:8] = R6[ 0: 8] : set start pixel
+	PMOV 6 3  9 17  9 0       // R3[0:8] = R6[ 9:17] : set end pixel
+	SET 13 3 @disk:done:      // Set IFJMP target for when we are done
+	IFJMP 1 @local:ifjmp:runner 0 // jump to done if R2 == R3
+	PMOV 6 4 18 26 18 0       // R4[0:8] = R6[18:26] : set position increment
+	MATH 14 13 5              // R13 = R14 : Set IFJMP target for inner loop
+	loop:
+		SETDATA 0 3 2                 // Draw a pixel from R2
+		MATH 4 2 0                    // R2 += R4 : increment position
+		IFJMP 1 @local:ifjmp:runner 1 // jump to loop if R2 != R3
+	SET 14 3 @disk:next:              // jump to next otherwise
+
+done: HLT
+
+demo_data:
+// Start pixel (is drawn), stop pixel (is not drawn), position increment
+DATAC 0b_10_0001_001___10_1110_111___00_0000_001... // Main area fill, TL-to-BR
+DATAC 0b_01_1110_111___00_1111_111___11_1111_000... // Bottom row, R-to-L
+DATAC 0b_01_0000_110___00_1111_111___11_1111_111... // Left column, B-to-T
+DATAC 0b_01_0001_000___10_0000_000___00_0001_000... // Top row, L-to-R
+DATAC 0b_01_1111_001___10_0000_000___00_0000_001... // Right column, T-to-B
+
+DATAC 0b_00_0001_010___00_0101_110___00_0001_001... // Black \ line
+DATAC 0b_11_0001_101___11_0101_001___00_0000_111... // Light-green / line
+
+DATAC 0b_00_0101_001___00_1111_001___00_0010_000... // Dotted line 1: 2px
+DATAC 0b_00_0101_010___01_0001_010___00_0011_000... // Dotted line 2: 3px
+DATAC 0b_00_0101_011___01_0001_011___00_0100_000... // Dotted line 3: 4px
+
+DATAC 0b_00_0101_101___00_1111_101___00_0010_000... // 2-color line part 1
+DATAC 0b_01_0110_101___10_0000_101___00_0010_000... // 2-color line part 2
+
+DATAC 0b_00_0101_110___01_0001_110___00_0011_000... // 3-color line part 1
+DATAC 0b_11_0110_110___11_1111_110___00_0011_000... // 3-color line part 2
+DATAC 0b_01_0111_110___10_0000_110___00_0011_000... // 3-color line part 3
+
+DATAC 0 // End of list
