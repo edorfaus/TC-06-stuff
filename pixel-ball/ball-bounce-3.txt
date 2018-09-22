@@ -1,0 +1,70 @@
+// This version is the same as ball-bounce-2 except it has been minified to be
+// loadable with the built-in bootloader - and to do that, it makes some
+// assumptions on the values of the registers (R15=1, R2<64, R3<256, rest=0).
+
+// R15 = 1 : assumed to be set this way by the loader
+// R13 = 0b00_0000_010... : Y_two : for changing Y direction
+// R12 = 0b00_0010_000... : X_two : for changing X direction
+
+// R9  : current ball position
+// R8  : current ball direction (increment)
+// R4  : previous ball position (to be erased)
+// R3  : used for comparisons - the fixed value to compare the X/Y pos to
+// R2  : used for comparisons - the X/Y pos to compare to the fixed value
+
+OVERLAY main
+
+PMOV 15 13 0 31 8 1 // R13 = 0b00_0000_010...
+PMOV 15 12 0 31 5 1 // R12 = 0b00_0010_000...
+
+SET 9 0 11100010    // R9 = 0b11_1000_100...
+
+// If support for the built-in bootloader is not needed, these can be removed:
+JMP 1 5 // Skip the bootloader jump
+JMP 1 0 // Address 4 : Jump to initialization from built-in bootloader start
+
+MOVI 8 @local:dir
+
+loop:
+	PMOV 9 4 2 8 0 0  // R4[2:8] = R9[2:8] : copy position to be erased
+
+	PMOV 4 2 0 5 26 1 // R2 = X pos
+
+	SET 3 3 15        // R3 = X max
+	IFJMP 1 @local:not_x_max 1 // if not at X_max, skip reversing
+
+	MATH 12 8 1 // R8 -= R12 : direction -= X_two, so go from +X to -X
+
+	not_x_max:
+
+	SET 3 3 0 // R3 = X min
+	IFJMP 1 @local:not_x_min 1 // if not at X_min, skip reversing
+
+	MATH 12 8 0 // R8 += R12 : direction += X_two, so go from -X to +X
+
+	not_x_min:
+
+	PMOV 9 2 6 9 22 1 // R2 = Y pos * 2
+
+	// SET 3 3 0 : R3 = Y min : R3 is already 0
+	IFJMP 1 @local:not_y_min 1 // if not at Y_min, skip reversing
+
+	MATH 13 8 0 // R8 += R13 : direction += Y_two, so go from -Y to +Y
+
+	not_y_min:
+
+	SET 3 3 ( 7 * 2 ) // R3 = Y max * 2
+	IFJMP 1 @local:not_y_max 1 // if not at Y_max, skip reversing
+
+	MATH 13 8 1 // R8 -= R13 : direction -= Y_two, so go from +Y to -Y
+
+	not_y_max:
+
+	MATH 8 9 0        // R9 += R8 : update position
+
+	SETDATA 0 3 4     // Erase old ball position
+	SETDATA 0 3 9     // Draw new ball position
+
+JMP 1 @local:loop
+
+dir: DATAC 0b00_0001_001...

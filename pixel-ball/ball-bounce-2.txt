@@ -1,0 +1,77 @@
+// This version uses pos/incr instead of separate X/Y.
+// This means it can only do 1:1 pixel resolution and 1px/frame X/Y speed.
+// But in return, I've actually completed it so it bounces both X and Y.
+
+// R15 = 1 : assumed from loader
+// R14 : reserved, MOVO instruction
+// R13 = 0b00_0000_010... : Y_two : for changing Y direction
+// R12 = 0b00_0010_000... : X_two : for changing X direction
+
+// R9  : current ball position
+// R8  : current ball direction (increment)
+
+OVERLAY init
+
+MOVI 13 @local:y_two
+MOVI 12 @local:x_two
+
+MOVI 9 @local:pos
+MOVI 8 @local:dir
+
+MATH 3 3 1
+MATH 2 2 1
+
+SET 2 3 @overlay:main_loop
+JMP 3 9
+
+pos: DATAC 0b11_1000_100...
+dir: DATAC 0b00_0001_001...
+
+y_two: DATAC 0b00_0000_010...
+x_two: DATAC 0b00_0010_000...
+
+
+OVERLAY main_loop
+
+loop:
+	MATH 2 2 1
+	PMOV 9 2 6 8 23 1 // R2 = Y pos
+
+	SET 3 3 7 // R3 = Y max
+	IFJMP 1 @local:not_y_max 1 // if not at Y_max, skip reversing
+
+	MATH 13 8 1 // R8 -= R13 : direction -= Y_two, so go from +Y to -Y
+
+	not_y_max:
+
+	SET 3 3 0 // R3 = Y min
+	IFJMP 1 @local:not_y_min 1 // if not at Y_min, skip reversing
+
+	MATH 13 8 0 // R8 += R13 : direction += Y_two, so go from -Y to +Y
+
+	not_y_min:
+
+	PMOV 9 2 2 5 26 1 // R2 = X pos
+
+	// SET 3 3 0 : R3 = X min : R3 is already 0
+	IFJMP 1 @local:not_x_min 1 // if not at X_min, skip reversing
+
+	MATH 12 8 0 // R8 += R12 : direction += X_two, so go from -X to +X
+
+	not_x_min:
+
+	SET 3 3 15 // R3 = X max
+	IFJMP 1 @local:not_x_max 1 // if not at X_max, skip reversing
+
+	MATH 12 8 1 // R8 -= R12 : direction -= X_two, so go from +X to -X
+
+	not_x_max:
+
+	MATH 9 2 5        // R2 = R9 : copy old position
+	PMOV 15 2 0 1 0 0 // R2[0:1] = R15[0:1]  : clear color
+
+	MATH 8 9 0        // R9 += R8 : update position
+
+	SETDATA 0 3 2     // Erase old ball position
+	SETDATA 0 3 9     // Draw new ball position
+JMP 1 @local:loop

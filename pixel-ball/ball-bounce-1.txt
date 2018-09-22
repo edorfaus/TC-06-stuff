@@ -1,0 +1,78 @@
+// This version uses a higher internal resolution for position than pixels.
+// I got to making Y bounce, and then realized I would need multiple overlays,
+// just for the X/Y bouncing, which I wanted to avoid due to speed reasons.
+// I'm not sure I can avoid that, but maybe if I combine X/Y to pos/dir?
+
+// R15 = 1
+// R14 : reserved, MOVO instruction
+// R13 = -1
+
+// R9  : current ball position X
+// R8  : current ball position Y
+// R7  : current ball speed X
+// R6  : current ball speed Y
+
+// R4  : ball pixel value
+
+OVERLAY init
+
+MATH 2 2 1
+MATH 3 3 1
+MATH 4 4 1
+
+MATH 6 6 1
+MATH 7 7 1
+MATH 8 8 1
+MATH 9 9 1
+
+MATH 13 13 1
+
+MATH 15 13 1 // R13 -= 1 : thus, R13 = -1
+
+SET 9 3 16 // X pos
+SET 8 3 8  // Y pos
+SET 7 3 2  // X speed
+SET 6 3 2  // Y speed
+
+SET 4 0 0b11...     // Set color
+PMOV 9 4 27 30 25 0 // R4[2:5] = R9[27:30] : set old X position
+PMOV 8 4 28 30 22 0 // R4[6:8] = R8[28:30] : set old Y position
+
+SET 2 3 @overlay:main_loop
+JMP 3 9
+
+
+OVERLAY main_loop
+
+loop:
+	MATH 8 2 5 // R2 = Y pos
+	MATH 6 2 0 // R2 + Y speed = new Y pos
+
+	SET 3 3 15 // Y max
+	IFJMP 1 @local:y_bounce 2 // if new Y > max Y, go to handle it
+
+	SET 3 3 0  // Y min
+	IFJMP 1 @local:y_bounce 3 // if new Y < min Y, go to handle it
+
+	y_done:
+	MATH 2 8 5 // save new Y pos
+
+	MATH 4 2 5          // R2 = R4 : copy old position
+	PMOV 15 2 0 1 0 0   // R2[0:1] = R15[0:1]  : clear color
+
+	PMOV 9 4 27 30 25 0 // R4[2:5] = R9[27:30] : set new X position
+	PMOV 8 4 28 30 22 0 // R4[6:8] = R8[28:30] : set new Y position
+
+	SETDATA 0 3 2       // Erase old ball position
+	SETDATA 0 3 4       // Draw new ball position
+JMP 1 @local:loop
+
+y_bounce:
+	MATH 13 6 2 // Y speed *= -1 : flip the speed
+	// R3 = edge; R2 = pos which is over the edge
+	// how much past the edge: PE = R2 - R3
+	// pos after bounce = edge - PE = R3 - (R2 - R3) = -R2 + R3 + R3
+	MATH 13 2 2 // R2 = -R2 : via R2 *= -1
+	MATH  3 2 0 // R2 += R3
+	MATH  3 2 0 // R2 += R3
+	JMP 1 @local:y_done
