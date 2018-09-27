@@ -1,0 +1,434 @@
+// R15 = 1
+// R14 : Program counter (aka instruction pointer).
+// R13 : Target address for a matching IFJMP. Return value for load_immediate.
+//       Expected letters (when more than one).
+// R12 : Stack pointer (used to store return addresses for function calls).
+// R1  : Overwritten before every instruction, saved to mem[1] after.
+
+// R9 : Address of next source character
+// R8 : Current source character
+// R7 : Address of next object code word (output of assembler)
+// R6 : Current object code word being assembled/outputted
+
+// R3 : Scratch space: for comparisons, loops, etc.
+// R2 : Scratch space: for comparisons, loops, etc.
+// R0 : Scratch space: letter function address, number parsing.
+
+OVERLAY runner
+
+JMP 1 @local:init // This is at RAM address 0 so normal bootloaders work.
+
+reg1: DATAC 1 // Used to initialize R15, and to store R1 at runtime.
+
+ifjmp:
+	MATH 13 14 5      // R14 = R13 : set instruction pointer.
+	JMP 1 @local:loop // Go back to the main loop to do the next instruction.
+
+JMP 1 @local:init // This is at RAM address 4 so the built-in bootloader works.
+
+loop:
+	GETDATA 1 3 14            // R1 = disk[R14] : read next instruction.
+	MATH 15 14 0              // R14++ : increment instruction pointer.
+	MOVO 1 @local:instruction // mem[..] = R1 : save instruction to RAM.
+	instruction: NIL          // The user-program instruction to be executed.
+	MOVO 1 @local:reg1        // mem[..] = R1 : save R1 in case it is needed.
+JMP 1 @local:loop             // Loop back to do the next instruction.
+
+// Load the next word into R13 instead of executing it.
+load_immediate:
+	GETDATA 1 3 14 // R1 = disk[R14] : read next word
+	MATH 15 14 0   // R14++   : skip over that word
+	MATH 1 13 5    // R13 = R1 : return that word to caller
+	JMP 1 @local:loop
+
+// Save return address into R13 and go to the address stored in the next word.
+call:
+	GETDATA 1 3 14    // Get address of function to call
+	MATH 15 14 0      // Increment PC past the function-to-call address
+	SETDATA 1 3 12 14 // Save return address to stack
+	MATH 15 12 0      // Increment stack pointer (to make it a push)
+	MATH 1 14 5       // Set program counter to the function address
+	JMP 1 @local:loop // Go back into main loop
+
+return: // Label for the return function that will be written at this address.
+
+program_start_addr: DATAC @disk:program_start:runner // Used to initialize R14.
+
+init:
+	MOVI 15 @local:reg1               // Initialize R15.
+	MOVI 14 @local:program_start_addr // Initialize R14 (the program counter).
+	JMP 1 @local:loop
+
+program_start: END_OVERLAY
+
+// Write the return function into RAM. overwriting the initialization code
+JMP 1 @local:load_immediate:runner
+	MATH 15 12 1   // Decrement stack pointer (to pop the address)
+MOVO 13 ( @local:return:runner + 0 )
+JMP 1 @local:load_immediate:runner
+	GETDATA 1 3 12 // Load the return address
+MOVO 13 ( @local:return:runner + 1 )
+JMP 1 @local:load_immediate:runner
+	MATH 1 14 5    // Update the program counter with it
+MOVO 13 ( @local:return:runner + 2 )
+// I'm here "cheating" by reusing the JMP instruction that is already in RAM,
+// instead of having more code here to overwrite it with identical code.
+
+// Initialize stack pointer
+JMP 1 @local:load_immediate:runner
+	DATAC @disk:stack_area
+MATH 13 12 5
+
+// Initialize source code address
+JMP 1 @local:load_immediate:runner
+	DATAC @disk:source_code
+MATH 13 9 5
+
+// Initialize object code address
+JMP 1 @local:load_immediate:runner
+	DATAC @disk:object_code
+MATH 13 7 5
+
+main_loop:
+	JMP 1 @local:call:runner             // Do a call...
+		DATAC @disk:get_next_source_char // to this function
+
+	// If char is null, we're done with the input
+	MATH 3 3 1 // R3 = 0
+	JMP 1 @local:load_immediate:runner
+		DATAC @disk:source_done
+	IFJMP 1 @local:ifjmp:runner 0
+
+	// Load address of function address table into R0
+	JMP 1 @local:load_immediate:runner
+		DATAC @disk:first_character_functions
+	MATH 13 0 5
+
+	// Load address of character-matched function into R13
+	JMP 1 @local:load_immediate:runner
+		DATAC @disk:character_found
+
+	SET 3 3 0x2F // R3 = '/'
+	IFJMP 1 @local:ifjmp:runner 0
+
+	MATH 15 0 0
+	SET 3 3 0x44 // R3 = 'D'
+	IFJMP 1 @local:ifjmp:runner 0
+
+	MATH 15 0 0
+	SET 3 3 0x47 // R3 = 'G'
+	IFJMP 1 @local:ifjmp:runner 0
+
+	MATH 15 0 0
+	SET 3 3 0x48 // R3 = 'H'
+	IFJMP 1 @local:ifjmp:runner 0
+
+	MATH 15 0 0
+	SET 3 3 0x49 // R3 = 'I'
+	IFJMP 1 @local:ifjmp:runner 0
+
+	MATH 15 0 0
+	SET 3 3 0x4A // R3 = 'J'
+	IFJMP 1 @local:ifjmp:runner 0
+
+	MATH 15 0 0
+	SET 3 3 0x4D // R3 = 'M'
+	IFJMP 1 @local:ifjmp:runner 0
+
+	MATH 15 0 0
+	SET 3 3 0x4E // R3 = 'N'
+	IFJMP 1 @local:ifjmp:runner 0
+
+	MATH 15 0 0
+	SET 3 3 0x50 // R3 = 'P'
+	IFJMP 1 @local:ifjmp:runner 0
+
+	MATH 15 0 0
+	SET 3 3 0x53 // R3 = 'S'
+	IFJMP 1 @local:ifjmp:runner 0
+
+	// No matching character: fall-through to error
+
+error:
+	SETDATA 0 0 0b10_0000_001... // Draw ERROR pixel
+	// TODO: consider showing where the error occurred somehow.
+	HLT                          // We're done, nothing more we can do.
+
+check_source_done:
+	// If current char is null, we're done with the source code.
+	MATH 8 2 5 // R2 = R8
+	MATH 3 3 1 // R3 = 0
+	JMP 1 @local:load_immediate:runner
+		DATAC @disk:main_loop
+	IFJMP 1 @local:ifjmp:runner 1 // If it's not null, continue the main loop.
+	// NOTE: intentional fall-through to source_done.
+
+// Running this block means that the source code ended at a place where that
+// does not cause an error, which means that the build process is complete.
+// This does not return, and halts the computer.
+source_done:
+	SETDATA 0 0 0b01_0001_000... // Draw OK-DONE pixel
+	HLT                          // We're done, nothing more to do.
+
+character_found:
+	// We want to run the given function, then "return" to the function
+	// check_source_done to check if the end of the source was reached, and if
+	// not, continue the main loop from the start (using the next character).
+	// To do this, we mess with the stack to manually set the return address.
+
+	JMP 1 @local:load_immediate:runner // Load address of check_source_done
+		DATAC @disk:check_source_done
+	SETDATA 1 3 12 13 // Save the address to the stack (as return address)
+	MATH 15 12 0      // Increment stack pointer (to make it a push)
+
+	GETDATA 1 3 0              // Load address of function for this character
+	MOVI 14 @local:reg1:runner // Jump into it (like a call does)
+
+first_character_functions: // TODO: fill these out
+	DATAC @disk:handle_comment // '/'
+	DATAC @disk:error // 'D'
+	DATAC @disk:error // 'G'
+	DATAC @disk:handle_hlt // 'H'
+	DATAC @disk:error // 'I'
+	DATAC @disk:error // 'J'
+	DATAC @disk:error // 'M'
+	DATAC @disk:error // 'N'
+	DATAC @disk:error // 'P'
+	DATAC @disk:error // 'S'
+
+
+// Handle a HLT instruction.
+handle_hlt:
+	// We found 'H' already, check that it's followed by 'LT'.
+	JMP 1 @local:load_immediate:runner
+		DATAC 0x4C_54 // R13 = 'LT'
+	JMP 1 @local:call:runner
+		DATAC @disk:expect_2_chars
+
+	// Initialize output instruction word
+	PMOV 15 6 0 31 28 0 // R6 = 0b0001... = HLT
+
+	JMP 1 @local:call:runner
+		DATAC @disk:skip_comment_if_present
+
+	JMP 1 @local:load_immediate:runner
+		DATAC @disk:handle_hlt__argument_done
+	SET 3 3 0x20                  // R3 = ' ' (space)
+	IFJMP 1 @local:ifjmp:runner 1 // Jump if it's not a space.
+
+	// There was a space, which means we should expect an argument.
+
+	JMP 1 @local:call:runner
+		DATAC @disk:expect_uint
+
+	// TODO: check that it's in range?
+
+	PMOV 0 6 4 31 0 0 // Copy the number into the instruction word
+
+	handle_hlt__argument_done:
+
+	JMP 1 @local:call:runner
+		DATAC @disk:expect_at_eol
+
+	SETDATA 1 3 7 6 // Save the assembled instruction to disk
+	MATH 15 7 0     // Increment target address
+
+	// Return to the main loop.
+	JMP 1 @local:return:runner
+
+// Handle a comment (check it starts with '/' and skip to EOL (or EOF)).
+// The character '/' must already be in R3 on entry to this block.
+// This expects to be jumped to, not called as a function; it doesn't return.
+// Overwrites R2, R3, R13.
+handle_comment:
+	// R3 should already be set to '/' on entry to this function
+	// SET 3 3 0x2F // R3 = '/'
+	JMP 1 @local:call:runner
+		DATAC @disk:expect_char
+
+	// We had two slashes in a row, so the rest of the line is a comment.
+
+	MATH 14 13 5 // Save loop start address for later ifjmp
+
+	JMP 1 @local:call:runner
+		DATAC @disk:get_next_source_char
+
+	SET 3 3 0x0A // R3 = '\n'
+	IFJMP 1 @local:return:runner 0 // If newline, then return
+
+	MATH 3 3 1   // R3 = 0
+	IFJMP 1 @local:ifjmp:runner 1 // If not EOF, then skip next char too
+
+	JMP 1 @local:return:runner // We hit EOF, so return
+
+
+// Check that the next characters are a base-10 integer, and load their value.
+// If the first char is not 0-9 this errors out, otherwise it stops loading and
+// returns at the first character that is not within 0-9, with the next char
+// already read.
+// Returns the value in R0
+// Overwrites: R0 R2 R3 R4 R13
+expect_uint:
+	MATH 0 0 1 // R0 = 0
+	MATH 4 4 1 // R4 = 0
+	SET 4 3 10 // R4 = 10
+
+	JMP 1 @local:call:runner
+		DATAC @disk:get_next_source_char
+
+	// Set jump-to address for the following sanity checks.
+	JMP 1 @local:load_immediate:runner
+		DATAC @disk:error
+
+	SET 3 3 0x39 // R3 = '9'
+	IFJMP 1 @local:ifjmp:runner 2 // Error out if char > '9'
+
+	SET 3 3 0x30 // R3 = '0'
+	IFJMP 1 @local:ifjmp:runner 3 // Error out if char < '0'
+
+	MATH 14 13 5 // Keep current PC for looping back to it
+
+		MATH 3 2 1 // R2 -= R3 : Turn digit char into numeric value
+		MATH 4 0 2 // R0 *= R4 : Move value up by one order of magnitude
+		MATH 2 0 0 // R0 += R2 : Add in the value of the current digit
+
+		JMP 1 @local:call:runner
+			DATAC @disk:get_next_source_char
+
+		SET 3 3 0x39 // R3 = '9'
+		IFJMP 1 @local:return:runner 2 // Return if char > '9'
+
+		SET 3 3 0x30 // R3 = '0'
+		IFJMP 1 @local:return:runner 3 // Return if char < '0'
+
+	MATH 13 14 5 // Loop back to do the next digit
+
+
+// Check that the next 4 source chars are the given 4 characters.
+// The chars to look for must be in R13 as separate bytes, in high-to-low order
+// (meaning that the highest of the bytes is the first char, etc.).
+// If this returns the chars were found, otherwise it calls the error function.
+expect_4_chars:
+	PMOV 13 3 0 7 24 1 // R3[0:7] = R13[24:31] : grab first char
+	JMP 1 @local:call:runner
+		DATAC @disk:expect_char
+	// NOTE: intentional fall-through to expect_3_chars (as a tail call).
+
+// Check that the next 3 source chars are the given 3 characters.
+// The chars to look for must be in R13 as the low 3 bytes, in high-to-low
+// order (meaning that the highest of the 3 low bytes is the first char, etc.).
+// If this returns the chars were found, otherwise it calls the error function.
+expect_3_chars:
+	PMOV 13 3 8 15 16 1 // R3[8:15] = R13[24:31] : grab third-last char
+	JMP 1 @local:call:runner
+		DATAC @disk:expect_char
+	// NOTE: intentional fall-through to expect_2_chars (as a tail call).
+
+// Check that the next 2 source chars are the given 2 characters.
+// The chars to look for must be in R13 as the low 2 bytes, in high-to-low
+// order (meaning that the highest of the 2 low bytes is the first char, etc.).
+// If this returns the chars were found, otherwise it calls the error function.
+expect_2_chars:
+	PMOV 13 3 16 23 8 1 // R3[16:23] = R13[24:31] : grab second-last char
+	JMP 1 @local:call:runner
+		DATAC @disk:expect_char
+	PMOV 13 3 24 31 0 0 // R3[24:31] = R13[24:31] : grab last char
+	// NOTE: intentional fall-through to expect_char (as a tail call).
+
+// Gets the next source char and checks that it is the expected char.
+// The expected char must be in R3. If the char matches, this returns,
+// otherwise it calls the error function.
+expect_char:
+	JMP 1 @local:call:runner
+		DATAC @disk:get_next_source_char
+	IFJMP 1 @local:return:runner 0 // Return if it's the expected char.
+	JMP 1 @local:call:runner
+		DATAC @disk:error
+
+
+// Check if a comment is present at the current location, and if so, skip it.
+// Either way, this will get the next character (as per get_next_source_char).
+// Overwrites: R0 R2 R3 R13
+skip_comment_if_present:
+	MATH 9 0 5 // Keep original source location in case it's not a comment.
+
+	SET 3 3 0x20 // R3 = ' ' (space)
+	MATH 14 13 5 // Set address for loop
+
+	JMP 1 @local:call:runner
+		DATAC @disk:get_next_source_char
+
+	IFJMP 1 @local:ifjmp:runner 0 // Loop if it's a space, to skip it.
+
+	SET 3 3 0x2F // R3 = '/' (slash)
+	JMP 1 @local:load_immediate:runner
+		DATAC @disk:handle_comment
+	IFJMP 1 @local:ifjmp:runner 0 // Tail call handle_comment if it's a slash.
+
+	// It's not a comment, so restore old position and read that character,
+	// for consistency between the non-comment and comment cases. (Both should
+	// read the "next" character.)
+	MATH 0 9 5
+	JMP 1 @local:call:runner
+		DATAC @disk:get_next_source_char
+	JMP 1 @local:return:runner
+
+
+// Check that the current char is at EOL, EOF, or a comment. If the latter,
+// that comment is skipped before this returns.
+expect_at_eol:
+	MATH 3 3 1                     // R3 = 0 (EOF)
+	IFJMP 1 @local:return:runner 0 // Return if it's this character.
+	SET 3 3 0x0A                   // R3 = '\n' (newline)
+	IFJMP 1 @local:return:runner 0 // Return if it's this character.
+
+	JMP 1 @local:load_immediate:runner
+		DATAC @disk:handle_comment
+	SET 3 3 0x2F                  // R3 = '/' (slash)
+	IFJMP 1 @local:ifjmp:runner 0 // Tail call if it's this character.
+
+	JMP 1 @local:load_immediate:runner
+		DATAC @disk:error
+	SET 3 3 0x20                  // R3 = ' ' (space)
+	IFJMP 1 @local:ifjmp:runner 1 // Error out if it's not a space either.
+
+	// It's a space, so try to skip a comment and check again.
+	MATH 15 9 1 // Go back a step so we don't move if not a comment.
+	JMP 1 @local:call:runner
+		DATAC @disk:skip_comment_if_present
+
+	// If it did not find a comment, it will still be that space. If it did
+	// find a comment, then we must now be at EOL or EOF, and it's not a space.
+	SET 3 3 0x20                   // R3 = ' ' (space)
+	IFJMP 1 @local:return:runner 1 // Return if it's not a space.
+
+	// Space without immediate comment, so we're not at EOL or EOF.
+	JMP 1 @local:call:runner
+		DATAC @disk:error
+
+
+// Get the next character from the source code.
+get_next_source_char:
+	GETDATA 1 3 9              // mem[1] = disk[R9] : get next char
+	MOVI 8 @local:reg1:runner  // R8 = mem[1]       : put it in R8
+	MATH 15 9 0                // R9++
+	MATH 8 2 5                 // R2 = R8 : since most callers need to check it
+	JMP 1 @local:return:runner // Return to caller
+
+
+stack_area: // Used for storing the return addresses for function calls.
+NILLIST 8
+
+source_code: // This is the source code that we want to assemble into a binary.
+	DATAC 0x48 // 'H'
+	DATAC 0x4C // 'L'
+	DATAC 0x54 // 'T'
+	DATAC 0x20 // SP
+	DATAC 0x31 // '1'
+	DATAC 0x0A // \n
+	DATAC 0 // EOF
+	DATAC 0 // EOF
+	DATAC 0 // EOF
+
+object_code: // This is where the assembled program will be stored.
+	NILLIST 3
