@@ -1,0 +1,202 @@
+// R15: static: 1
+// R14: static*: MOVO instruction (address varies)
+// R3: temp: loop max = end address on disk
+// R2: input*: source address on disk; temp: loop counter
+// R1: temp: data read from disk
+
+// At most 22 words can be used by each overlay section.
+
+OVERLAY overlay_loader_loader
+
+JMP 1 @local:loader_init // Jump to init code, to allow for general bootloaders
+one:        DATAC 1
+start_addr: DATAC @disk:overlay_loader_code_start
+end_addr:   DATAC @disk:overlay_loader_code_end
+loader_init: // memory address 4 : built-in bootloader's entry point
+MOVI 15 @local:one       // R15=ram[..] : initialize register for math use
+MOVI 14 @local:movo      // R14=ram[..] : load the save-to-RAM instruction
+MOVI 2 @local:start_addr // R2=ram[..] : start address of loader code
+MOVI 3 @local:end_addr   // R3=ram[..] : end address of loader code
+loop:
+	GETDATA 1 3 2            // R1=read(disk, R2) : read program data from disk
+	movo: MOVO 1 22          // ram[22]=R1 : save the data to RAM; addr changes
+	MATH 15 2 0              // R2++ : increment disk address
+	MATH 15 14 0             // R14++ : increment RAM address
+	MOVO 14 @local:movo      // ram[..]=R14 : update the saving instruction
+	IFJMP 2 @relative:loop 3 // jump back to loop if R2 < R3
+MOVI 2 @local:end_addr // load address of main program overlay
+JMP 3 9                // run the overlay loader to load it
+
+END_OVERLAY
+
+overlay_loader_code_start: // Start of loader code that we will load into RAM.
+// This code avoids using @-references because it is not loaded at addr 0.
+GETDATA 1 3 2  // R1=read(disk, R2) : read disk address of last instr. to load
+MATH 1 3 5     // R3=R1 : set loop max register to that disk address
+SET 14 3 0     // R14[address]=0 : initialize RAM address
+	MOVO 14 29    // ram[29]=R14 : update save-to-RAM instruction; loop start
+	MATH 15 14 0  // R14++ : increment RAM address
+	MATH 15 2 0   // R2++ : increment disk address
+	GETDATA 1 3 2 // R1=read(disk, R2) : read program data from disk
+	MOVO 1 0      // ram[0]=R1 : save loaded data to RAM; note: self-modified
+	IFJMP 2 5 3   // loop: jump 5 back if R2<R3
+JMP 1 0        // start the loaded program
+overlay_loader_code_end: // End of loader code, and start of your main program
+
+
+OVERLAY validate_source_code_ends
+
+SETDATA 0 0 0b10_0000_000... // Set status pixel
+
+MOVI 4 @local:program_addr     // R4 = Program start address
+MOVI 3 @local:program_end_addr // R3 = Program end address
+
+GETDATA 1 3 4 // R1 = disk[R4] : Load end address from disk
+MATH 1 2 5    // R2 = R1 : Loaded end address
+
+IFJMP 1 @local:error 1 // If not same end address, something's wrong.
+
+MATH 3 5 5  // R5 = R3 : Program end address
+
+MATH 15 3 1 // R3-- : Address of last character in program
+MATH 4 2 5  // R2 = R4 : Program start address
+
+IFJMP 1 @local:error 0 // If program is empty, error out.
+
+GETDATA 1 3 3         // R1 = disk[R3] : Load last character of program
+MATH 1 2 5            // R2 = R1 : Loaded character
+MOVI 3 @local:newline // R3 = newline
+
+IFJMP 1 @local:error 1 // Last character of program must be a newline.
+
+// Go to next overlay
+MOVI 2 @local:next_overlay
+JMP 3 9
+
+error:
+	SETDATA 0 0 0b10_0000_001... // Set error pixel
+	HLT
+
+program_addr:     DATAC @disk:program:
+program_end_addr: DATAC @disk:program_end:
+newline:          DATAC 0x0A
+next_overlay:     DATAC @overlay:validate_source_code_characters
+
+
+OVERLAY validate_source_code_characters
+// Previous overlay left the program start and end addresses in R4 and R5.
+
+MATH 4 6 5  // R6 = R4 : program start address
+MATH 15 6 0 // R6++ : address of first character to load
+
+loop:
+	GETDATA 1 3 6 // R1 = disk[R6] : next character from source
+
+	MATH 1 2 5             // R2 = R1 : current character
+
+	MATH 15 3 5            // R3 = 1
+	IFJMP 1 @local:error 3 // If char < 1, then error
+
+	SET 3 3 0xFF           // R3 = 0xFF : max allowed char value
+	IFJMP 1 @local:error 2 // If char > 0xFF, then error
+
+	MATH 15 6 0 // R6++ : next char address
+
+	MATH 6 2 5  // R2 = R6
+	MATH 5 3 5  // R3 = R5 : program end address
+	IFJMP 1 @local:loop 1 // Loop unless we reached end of program
+
+// End of program reached, go to next overlay
+MOVI 2 @local:next_overlay
+JMP 3 9
+
+next_overlay: DATAC @overlay:remove_comments
+
+error:
+	SETDATA 0 0 0b10_0000_010...
+	HLT
+
+
+OVERLAY remove_comments
+// Previous overlay left the program start and end addresses in R4 and R5.
+
+MATH 4 6 5  // R6 = R4 : program start address
+MATH 15 6 0 // R6++ : address of first character to load
+MATH 6 7 5  // R7 = R6 : address of where to save the current character
+
+loop:
+	GETDATA 1 3 6 // R1 = disk[R6] : next character from source
+	MATH 15 6 0   // R6++
+
+	MATH 1 2 5               // R2 = R1 : current character
+	MOVI 3 @local:slash_char // R3 = '/'
+
+	IFJMP 1 @local:no_comment 1 // If char != '/', then not a comment
+
+	GETDATA 1 3 6 // R1 = disk[R6] : next character from source
+	MATH 1 2 5    // R2 = R1
+	MATH 3 1 5    // R1 = R3 : set it back to the original char just in case
+	IFJMP 1 @local:no_comment 1 // If next char not '/', then not a comment
+
+	// It's a comment, so skip it.
+	MATH 15 6 0  // R6++
+	SET 3 3 0x0A // R3 = newline
+	comment_loop:
+		GETDATA 1 3 6 // R1 = disk[R6] : next character from source
+		MATH 15 6 0   // R6++
+		MATH 1 2 5    // R2 = R1
+		IFJMP 1 @local:comment_loop 1 // If not newline, then grab next char
+
+	no_comment:
+
+	SETDATA 1 3 7 1 // disk[R7] = R1 : Save current character to program
+	MATH 15 7 0     // R7++
+
+	MATH 6 2 5 // R2 = R6 : next char address
+	MATH 5 3 5 // R3 = R5 : program end address
+
+	IFJMP 1 @local:loop 1 // Loop unless we reached end of program
+
+// End of program reached, save new end address
+SETDATA 1 3 4 7 // disk[R4] = R7
+MATH 7 5 5      // R5 = R7
+
+// Go to next overlay
+MOVI 2 @local:next_overlay
+JMP 3 9
+
+slash_char:   DATAC 0x2F
+next_overlay: DATAC @overlay:pass2
+
+OVERLAY pass2
+
+	SETDATA 0 0 0b10_0001_011...
+	HLT
+
+END_OVERLAY
+
+// This starts as the source code that we want to assemble into object code.
+// (Note that every line, including the last, must end in a newline character.)
+// Then, it gets transformed by the assembler, in several passes, until it ends
+// up being the object code. (A failed assembler run may leave it as garbage.)
+// For all of these, the first word contains the end address of the program.
+program: DATAC @disk:program_end
+
+	DATAC 0x48 // 'H'
+	DATAC 0x4C // 'L'
+	DATAC 0x54 // 'T'
+	DATAC 0x20 // SP
+	DATAC 0x31 // '1'
+	DATAC 0x20 // SP
+	DATAC 0x2F // '/'
+	DATAC 0x2F // '/'
+	DATAC 0x20 // SP
+	DATAC 0x48 // 'H'
+	DATAC 0x49 // 'I'
+	DATAC 0x0A // \n
+	DATAC 0x48 // 'H'
+	DATAC 0x4C // 'L'
+	DATAC 0x54 // 'T'
+	DATAC 0x0A // \n
+
+program_end: // This marks the end of the program to be assembled.
