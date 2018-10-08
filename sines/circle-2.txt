@@ -1,0 +1,88 @@
+// R15 = 1
+// R11 = 0x00010001: table offsets addend
+// R9 : current pixel data
+// R6 : table offsets X/Y
+// R5 : address in cosine table
+// R3 : loop end
+// R2 : loop counter
+// R1 : value read from cosine table
+
+OVERLAY draw
+
+JMP 1 @local:start
+one: DATAC 1
+cosine_table_start: DATAC @disk:cosine_table_start:
+cosine_table_size: DATAC 32
+
+start:
+MOVI    15 @local:one                // R15 = 1
+MOVI    11 @local:offsets_addend     // R11 = offset addend
+PMOV 15  9 0 31 2 1                  // R9 = pixel color, and clear position
+MOVI     6 @local:initial_offsets    // R6 = inital table offsets
+MOVI     5 @local:cosine_table_start // R5 = table address
+MOVI     3 @local:cosine_table_size  // R3 = 32 : table size
+MATH     2 2 1                       // R2 = 0 : loop counter
+
+loop:
+	PMOV 6 5 11 15 16 0 // R5[offset] = R6[X-offset]
+	GETDATA 1 3 5       // R1 = disk[R5] : read X value from table
+	PMOV 1 9 29 31 6 1  // R9[X-pos] = R1
+
+	PMOV 6 5 27 31  0 0 // R5[offset] = R6[Y-offset]
+	GETDATA 1 3 5       // R1 = disk[R5] : read Y value from table
+	PMOV 1 9 29 31 9 1  // R9[Y-pos] = R1[Y-pos]
+
+	SETDATA 0 3 9      // draw pixel
+
+	MATH 11 6 0        // R6 += R11 : increment table offsets
+
+	MATH 15 2 0        // R2++ : increment X position (by one half)
+
+IFJMP 1 @local:loop 1
+
+HLT
+
+initial_offsets: DATAC 0x00_08_00_00
+offsets_addend:  DATAC 0x00_01_00_01
+
+
+END_OVERLAY
+
+// Align the cosine table to an address that is a multiple of its size.
+align_cosine_table: NILLIST ( ( 32 - @disk:align_cosine_table: % 32 ) % 32 )
+
+// 32-entry table of -cos() values for radius 3.5 centered on 3.5 (values 0-7).
+// This was built using cos() on the entire 0 - 2*pi range, with rounding.
+cosine_table_start:
+DATAC 0 // offset 0 : start here for -cos()
+DATAC 0
+DATAC 0
+DATAC 1
+DATAC 1
+DATAC 2
+DATAC 2
+DATAC 3
+DATAC 4 // offset 8 : start here for sin()
+DATAC 4
+DATAC 5
+DATAC 5
+DATAC 6
+DATAC 6
+DATAC 7
+DATAC 7
+DATAC 7 // offset 16 : start here for cos()
+DATAC 7
+DATAC 7
+DATAC 6
+DATAC 6
+DATAC 5
+DATAC 5
+DATAC 4
+DATAC 4 // offset 24 : start here for -sin()
+DATAC 3
+DATAC 2
+DATAC 2
+DATAC 1
+DATAC 1
+DATAC 0
+DATAC 0

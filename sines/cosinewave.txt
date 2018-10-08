@@ -1,0 +1,80 @@
+// R15 = 1
+
+// R11 = 0b00_0001_000... : X increment value
+
+// R9 : current pixel value
+
+// R3 : end address (one past end of cos table)
+// R2 : current address into cos table
+// R1 : current value from cos table
+
+OVERLAY draw
+
+JMP 1 @local:start
+one: DATAC 1
+cosine_table_start: DATAC @disk:cosine_table_start:
+cosine_table_end: DATAC ( @disk:cosine_table_start: + 32 )
+
+start:
+MOVI    15 @local:one                // R15 = 1
+PMOV 15 11 0 31 6 1                  // R11 = X increment
+PMOV 15  9 0 31 2 1                  // R9 = pixel color && position
+MOVI     2 @local:cosine_table_start // R2 = table address
+MOVI     3 @local:cosine_table_end   // R3 = end address
+
+loop:
+	GETDATA 1 3 2
+	MATH 15 2 0
+
+	PMOV 1 9 29 31 9 1 // R9[Y-pos] = R1[value]
+	SETDATA 0 3 9
+
+	GETDATA 1 3 2
+	MATH 15 2 0
+
+	PMOV 1 9 29 31 9 1 // R9[Y-pos] = R1[value]
+	SETDATA 0 3 9
+
+	MATH 11 9 0
+
+IFJMP 1 @local:loop 1
+
+HLT
+
+END_OVERLAY
+
+// 32-entry table of -cos() values for radius <4 centered on 4 (values 0-7).
+// This was built using quadrant symmetries, based on the quadrant from cos(0)
+cosine_table_start:
+DATAC 0 // offset 0 : start here for -cos()
+DATAC 0
+DATAC 0
+DATAC 0
+DATAC 1
+DATAC 1
+DATAC 2
+DATAC 3
+DATAC 4 // offset 8 : start here for sin()
+DATAC 5
+DATAC 6
+DATAC 6
+DATAC 7
+DATAC 7
+DATAC 7
+DATAC 7
+DATAC 7 // offset 16 : start here for cos()
+DATAC 7
+DATAC 7
+DATAC 7
+DATAC 6
+DATAC 6
+DATAC 5
+DATAC 4
+DATAC 3 // offset 24 : start here for -sin()
+DATAC 2
+DATAC 1
+DATAC 1
+DATAC 0
+DATAC 0
+DATAC 0
+DATAC 0
