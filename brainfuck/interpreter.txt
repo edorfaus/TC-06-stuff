@@ -1,0 +1,487 @@
+// Register assignment:
+// R15 = 1 : set by loader
+// R14 : reserved by loader
+// R13 : address of main overlay
+// R12 : address of program start
+// R11 : address of loop_back_check_is_before_start overlay
+// R10 = 2
+// R9 : instruction pointer
+// R8 : memory pointer
+// R7 : address of skip_forward_check_eof overlay
+// R6 : current instruction (when moving from main to another overlay)
+// R5 = 0b00_0000_001... : value for incrementing Y (and X via overflow)
+// R4 : current pixel position/value for output
+// R1-3 : temp storage, reading data, comparisons, overlay loading, etc.
+// R0 : kept at 0 except within individual handlers, which must reset it
+
+OVERLAY init
+
+MOVI    13 @local:main_overlay
+MOVI    12 @local:program_start
+MOVI    11 @local:loop_back_check_is_before_start
+PMOV 15 10 0 31 1 0                               // R10 = 2
+MOVI     9 @local:program_start
+MOVI     8 @local:memory_start
+MOVI     7 @local:skip_forward_check_eof
+PMOV 15  5 0 31 9 1                               // R5 = 0b00_0000_001...
+MATH     4 4 1                                    // R4 = 0
+MATH     0 0 1                                    // R0 = 0
+
+MATH 13 2 5 // R2 = R13 : address of main overlay
+JMP 3 9
+
+program_start: DATAC @disk:program_start:
+memory_start:  DATAC @disk:memory_start:
+main_overlay:  DATAC @overlay:main
+loop_back_check_is_before_start: DATAC @overlay:loop_back_check_is_before_start
+skip_forward_check_eof: DATAC @overlay:skip_forward_check_eof
+
+// This alignment is here to push the next_instruction routine to the end of
+// the available space, to leave as much as possible for other overlays.
+// (The last number in the expression is the size of the routine.)
+align: NILLIST ( 22 - @local:align - 4 )
+
+// This is at address 18, so leaves 18 words of space for other overlays.
+next_instruction:
+GETDATA 1 3 9 // R1 = disk[R9] : read next instruction
+MATH 15 9 0   // R9++    : increment instruction pointer
+MATH  1 2 5   // R2 = R1 : the next instruction, for comparisons
+JMP 1 1       // Jump back to the current overlay
+
+
+OVERLAY main
+
+JMP 1 @local:next_instruction:init
+
+MATH  1 6 5   // R6 = R1 : save the instruction for use by the other overlays
+
+// Combine 3 of the bits of the instruction into an offset into the overlay map
+MATH 3 3 1         // R3 = 0
+PMOV 2 3 30 31 0 0 // R3[30:31] = R2[30:31] : lowest 2 bits
+PMOV 2 3 27 27 2 1 // R3[29]    = R2[27]    : highest 1 bit
+
+MOVI 2 @local:instruction_overlay_map // R2 = ram[..] : address of overlay map
+MATH 3 2 0                            // R2 += R3     : add the offset
+
+GETDATA 1 3 2 // R1 = disk[R2] : load the address of the overlay from the map
+MATH 1 2 5    // R2 = R1
+JMP 3 9       // Load and run that overlay
+
+instruction_overlay_map: DATAC @disk:instruction_overlay_map:
+
+END_OVERLAY
+
+instruction_overlay_map:
+// NOTE: This map is in a very specific order, so that we can generate the
+// offset into it using just two PMOV instructions based on the ASCII value.
+DATAC @overlay:do_input        // 000: 0x2C "," : get value from input
+DATAC @overlay:do_dec_value    // 001: 0x2D "-" : decrement value
+DATAC @overlay:do_output       // 010: 0x2E "." : write value to output
+DATAC @overlay:do_inc_value    // 011: 0x2B "+" : increment value
+DATAC @overlay:do_dec_pointer  // 100: 0x3C "<" : decrement data pointer
+DATAC @overlay:do_loop_back    // 101: 0x5D "]" : if value != 0, loop back
+DATAC @overlay:do_inc_pointer  // 110: 0x3E ">" : increment data pointer
+DATAC @overlay:do_skip_forward // 111: 0x5B "[" : if value == 0, skip forward
+
+
+OVERLAY do_input // Handle ","
+
+MATH 6 2 5 // R2 = R6 : grab instruction character
+MATH 3 3 1 // R3 = 0
+IFJMP 1 @local:not_eof 1 // if char was not 0, then it's not EOF
+
+	MOVI 2 @local:check_eof
+	JMP 3 9
+	check_eof: DATAC @overlay:check_eof
+
+not_eof:
+
+SET 3 3 0x2C          // R3 = ","
+IFJMP 1 @local:done 1 // if not "," then it's a comment char
+
+MATH 3 3 1 // R3 = 0
+
+SETDATA 0 0 0b11_1111_000... // Show that we're waiting for input
+
+loop:
+	GETDATA 2 0 0         // R1 = get next key (or 0 if none pressed)
+	MATH 1 2 5            // R2 = R1
+	IFJMP 1 @local:loop 0 // if key == 0 then no key pressed so try again
+
+SETDATA 0 0 0b00_1111_000... // Clear the waiting-for-input pixel
+
+SETDATA 1 3 8 1    // disk[R8] = R1 : write new value
+
+done:
+MATH 13 2 5 // R2 = R13 : address of main overlay
+JMP 3 9
+
+
+OVERLAY check_eof
+
+MATH 9 2 5                // R2 = R9
+MOVI 3 @local:program_end // R3 = ram[..] : address of end of BF program
+IFJMP 1 @local:not_done 3 // if R2 < R3 then we're not done yet
+
+// We hit EOF, so we're done running the BF program
+
+HLT
+
+not_done:
+// We haven't reached EOF yet, so apparently there was a null character in the
+// middle of the BF program. While that's a bit odd, we don't really care...
+MATH 13 2 5 // R2 = R13 : address of main overlay
+JMP 3 9
+
+program_end:  DATAC @disk:program_end:
+
+
+OVERLAY do_output // Handle "."
+
+MATH 6 2 5            // R2 = R6 : grab instruction character
+MOVI 3 @local:period  // R3 = "."
+IFJMP 1 @local:done 1 // if not "." then it's a comment char
+
+GETDATA 1 3 8 // R1 = disk[R8] : read current value
+
+MATH 2 2 1         // R2 = 0
+PMOV 15 3 0 31 3 0 // R3 = 8
+
+loop:
+	PMOV 1 4 31 31 2 1    // R4[1] = R1[31] : set color for this pixel
+	SETDATA 0 3 4         // set pixel
+
+	MATH 5 4 0            // R4 += R5 : increment pixel address for next bit
+	PMOV 1 1 0 31 1 1     // R1 = R1 >> 1 : update which bit we'll display next
+
+	MATH 15 2 0           // R2++
+	IFJMP 1 @local:loop 3 // if R2 < R3 then do another
+
+done:
+MATH 13 2 5 // R2 = R13 : address of main overlay
+JMP 3 9
+
+period: DATAC 0x2E // "."
+
+
+OVERLAY do_dec_value // Handle "-"
+
+JMP 1 @local:init
+
+MATH 15 0 0                            // R0++ : we found one
+IFJMP 1 @local:next_instruction:init 0 // Check if there are more
+
+// We found one that wasn't "-", so we're done, just have to update the value
+
+GETDATA 1 3 8      // R1 = disk[R8] : read current value
+MATH 0 1 1         // R1 -= R0      : update the value
+PMOV 15 1 0 23 0 0 // R1[0:23] = 0  : wrap as if 8-bit value
+SETDATA 1 3 8 1    // disk[R8] = R1 : write new value
+
+MATH 15 9 1 // R9-- : decrement instruction pointer, to avoid skipping one
+
+MATH 0 0 1  // R0 = 0 : reset for later use
+
+JMP 1 @local:done
+
+init:
+MATH 6 2 5                             // R2 = R6 : grab instruction character
+MOVI 3 @local:minus                    // R3 = "-"
+IFJMP 1 @local:next_instruction:init 0 // if "-" then check for another
+
+// It wasn't "-" so it must be a comment char, so return to do the next one
+
+done:
+MATH 13 2 5 // R2 = R13 : address of main overlay
+JMP 3 9
+
+minus: DATAC 0x2D // "-"
+
+
+OVERLAY do_inc_value // Handle "+"
+
+JMP 1 @local:init
+
+MATH 15 0 0                            // R0++ : we found one
+IFJMP 1 @local:next_instruction:init 0 // Check if there are more
+
+// We found one that wasn't "+", so we're done, just have to update the value
+
+GETDATA 1 3 8      // R1 = disk[R8] : read current value
+MATH 0 1 0         // R1 += R0      : update the value
+PMOV 15 1 0 23 0 0 // R1[0:23] = 0  : wrap as if 8-bit value
+SETDATA 1 3 8 1    // disk[R8] = R1 : write new value
+
+MATH 15 9 1 // R9-- : decrement instruction pointer, to avoid skipping one
+
+MATH 0 0 1  // R0 = 0 : reset for later use
+
+JMP 1 @local:done
+
+init:
+MATH 6 2 5                             // R2 = R6 : grab instruction character
+MOVI 3 @local:plus                     // R3 = "+"
+IFJMP 1 @local:next_instruction:init 0 // if "+" then check for another
+
+// It wasn't "+" so it must be a comment char, so return to do the next one
+
+done:
+MATH 13 2 5 // R2 = R13 : address of main overlay
+JMP 3 9
+
+plus: DATAC 0x2B // "+"
+
+
+OVERLAY do_dec_pointer // Handle "<"
+
+JMP 1 @local:init
+
+MATH 15 8 1 // R8-- : decrement data pointer
+
+IFJMP 1 @local:next_instruction:init 0 // Check if there are more
+
+// We found one that wasn't "<", so we're done
+
+MATH 15 9 1 // R9-- : decrement instruction pointer, to avoid skipping one
+
+JMP 1 @local:done
+
+init:
+MATH 6 2 5                             // R2 = R6 : grab instruction character
+MOVI 3 @local:less_than                // R3 = "<"
+IFJMP 1 @local:next_instruction:init 0 // if "<" then check for another
+
+// It wasn't "<" so it must be a comment char, so return to do the next one
+
+done:
+MATH 13 2 5 // R2 = R13 : address of main overlay
+JMP 3 9
+
+less_than: DATAC 0x3C // "<"
+
+
+OVERLAY do_inc_pointer // Handle ">"
+
+JMP 1 @local:init
+
+MATH 15 8 0 // R8++ : increment data pointer
+
+IFJMP 1 @local:next_instruction:init 0 // Check if there are more
+
+// We found one that wasn't ">", so we're done
+
+MATH 15 9 1 // R9-- : decrement instruction pointer, to avoid skipping one
+
+JMP 1 @local:done
+
+init:
+MATH 6 2 5                             // R2 = R6 : grab instruction character
+MOVI 3 @local:greater_than             // R3 = ">"
+IFJMP 1 @local:next_instruction:init 0 // if ">" then check for another
+
+// It wasn't ">" so it must be a comment char, so return to do the next one
+
+done:
+MATH 13 2 5 // R2 = R13 : address of main overlay
+JMP 3 9
+
+greater_than: DATAC 0x3E // ">"
+
+
+OVERLAY do_loop_back // Handle "]"
+
+GETDATA 1 3 8         // R1 = disk[R8] : read current value
+MATH 1 2 5            // R2 = R1
+MATH 3 3 1            // R3 = 0
+IFJMP 1 @local:done 0 // if value is 0 then it acts just like a comment char
+// (and checking this first saves one instruction - loading is slow)
+
+MATH 6 2 5            // R2 = R6 : grab instruction character
+SET 3 3 0x5D          // R3 = "]"
+IFJMP 1 @local:done 1 // if not "]" then it must be a comment char, so return
+
+// The instruction is "]" and the value is nonzero, so find the matching "["
+
+MATH 15 0 5             // R0 = 1
+MOVI 2 @local:loop_back
+JMP 3 9
+loop_back: DATAC @overlay:loop_back
+
+done:
+MATH 13 2 5 // R2 = R13 : address of main overlay
+JMP 3 9
+
+
+OVERLAY loop_back
+
+JMP 1 @local:loop
+
+MATH 3 3 1 // R3 = 0
+IFJMP 1 @local:not_zero 1
+
+	MATH 11 2 5 // R2 = R11 : address of loop_back_check_is_before_start overlay
+	JMP 3 9
+
+not_zero:
+
+SET 3 3 0x5D          // R3 = "]"
+IFJMP 1 @local:not_left_bracket 1
+
+	MATH 15 0 0       // R0++ : another bracket to close before we're done
+	JMP 1 @local:loop
+
+not_left_bracket:
+
+SET 3 3 0x5B          // R3 = "["
+IFJMP 1 @local:loop 1 // if not "[" either then move on to next char
+
+MATH 15 0 1 // R0-- : close a bracket
+MATH 0 2 5  // R2 = R0
+MATH 3 3 1  // R3 = 0
+IFJMP 1 @local:loop 1 // if not the matching bracket, then keep going
+
+// Matching bracket found, and R9 is already set to the right value, so done.
+MATH 13 2 5 // R2 = R13 : address of main overlay
+JMP 3 9
+
+loop:
+MATH 10 9 1 // R9 -= 2 : to get the previous one instead of the next one
+// This JMP would overwrite the code we want to jump to, so just leave it out.
+//JMP 1 @local:next_instruction:init
+
+
+OVERLAY loop_back_check_is_before_start
+
+// If we're now at program start, then the previous character was past that.
+MATH  9 2 5 // R2 = R9  : the current instruction pointer
+MATH 15 2 1 // R2--     : the previously loaded instruction
+MATH 12 3 5 // R3 = R12 : the program start address
+IFJMP 1 @local:before_start 3
+
+	// We're not before start, so resume the loop
+	MOVI 2 @local:loop_overlay
+	JMP 3 9
+	loop_overlay: DATAC @overlay:loop_back
+
+before_start:
+
+// We moved back past the start of the program, so the BF program is faulty.
+
+SETDATA 0 0 0b10_0000_000...
+HLT
+
+
+OVERLAY do_skip_forward // Handle "["
+
+GETDATA 1 3 8         // R1 = disk[R8] : read current value
+MATH 1 2 5            // R2 = R1
+MATH 3 3 1            // R3 = 0
+IFJMP 1 @local:done 1 // if value != 0 then it acts just like a comment char
+// (and checking this first saves one instruction - loading is slow)
+
+MATH 6 2 5            // R2 = R6 : grab instruction character
+SET 3 3 0x5B          // R3 = "["
+IFJMP 1 @local:done 1 // if not "[" then it must be a comment char, so return
+
+// The instruction is "[" and the value is zero, so find the matching "]"
+
+MATH 15 0 5                // R0 = 1
+MOVI 2 @local:skip_forward
+JMP 3 9
+skip_forward: DATAC @overlay:skip_forward
+
+done:
+MATH 13 2 5 // R2 = R13 : address of main overlay
+JMP 3 9
+
+
+OVERLAY skip_forward
+
+JMP 1 @local:next_instruction:init
+
+MATH 3 3 1 // R3 = 0
+IFJMP 1 @local:not_zero 1
+
+	MATH 7 2 5 // R2 = R7 : address of skip_forward_check_eof overlay
+	JMP 3 9
+
+not_zero:
+
+SET 3 3 0x5B          // R3 = "["
+IFJMP 1 @local:not_left_bracket 1
+
+	MATH 15 0 0       // R0++ : another bracket to close before we're done
+	JMP 1 @local:next_instruction:init
+
+not_left_bracket:
+
+SET 3 3 0x5D          // R3 = "]"
+IFJMP 1 @local:next_instruction:init 1
+
+MATH 15 0 1 // R0-- : close a bracket
+MATH 0 2 5  // R2 = R0
+MATH 3 3 1  // R3 = 0
+IFJMP 1 @local:next_instruction:init 1
+
+// Matching bracket found, and R9 is already set to the right value, so done.
+MATH 13 2 5 // R2 = R13 : address of main overlay
+JMP 3 9
+
+
+OVERLAY skip_forward_check_eof
+
+MATH 9 2 5                // R2 = R9
+MOVI 3 @local:program_end // R3 = ram[..] : address of end of BF program
+IFJMP 1 @local:not_done 3 // if R2 < R3 then we're not done yet
+
+// We hit EOF, so the BF program is faulty.
+
+SETDATA 0 0 0b10_0000_000...
+HLT
+
+not_done:
+// We haven't reached EOF yet, so apparently there was a null character in the
+// middle of the BF program. While that's a bit odd, we don't really care...
+MOVI 2 @local:loop_overlay
+JMP 3 9
+loop_overlay: DATAC @overlay:skip_forward
+
+program_end:  DATAC @disk:program_end:
+
+
+END_OVERLAY
+
+
+// Instruction symbols used by brainfuck:
+// "<" : 0x3C = 0b00111100 : decrement data pointer
+// ">" : 0x3E = 0b00111110 : increment data pointer
+// "+" : 0x2B = 0b00101011 : increment value
+// "-" : 0x2D = 0b00101101 : decrement value
+// "." : 0x2E = 0b00101110 : output value
+// "," : 0x2C = 0b00101100 : input value
+// "[" : 0x5B = 0b01011011 : if value == 0, jump past the matching ]
+// "]" : 0x5D = 0b01011101 : if value != 0, jump back to matching [
+
+NIL // This is here to enable faster code for protecting against bad programs.
+program_start:
+
+// Add your BF program here, one DATAC per instruction (see above for values).
+// With a 256-word disk, you have 26 words to split between program and data.
+
+// Example program: read and echo characters infinitely: ,[.,]
+// This program takes advantage of an implementation detail, namely that the
+// input can never be a zero.
+
+DATAC 0x2C // ,
+DATAC 0x5B // [
+DATAC 0x2E // .
+DATAC 0x2C // ,
+DATAC 0x5D // ]
+
+program_end: NIL // EOF marker for the program - put the BF program above this.
+
+memory_start:
+// You can set this to as many memory cells as your BF program needs, assuming
+// that you have the disk space for it. This expression assumes a 256-word disk
+// and uses the rest of it, however much that may be.
+NILLIST ( 256 - @disk:memory_start: )
