@@ -1,0 +1,470 @@
+// Register assignments:
+// R15 = 1 (set by overlay loader loader, used all over)
+// R14: loader: MOVO 1 instruction (address varies)
+
+// R13: drawing: pixel being drawn
+
+// R12: runner: program counter - address of next instruction to run
+
+// R11: runner: load_r11_to_r2: disk address to load data from
+// R11: settings: address of/into wasd increments table
+
+// R10: drawing: address of/into cosine table
+
+// R9 : drawing: X/Y angular speed (addend to angle position)
+// R9 : settings: Y angular speed minus one (values 0-7 means speed 1-8), mod 8
+
+// R8 : settings: X angular speed minus one (values 0-7 means speed 1-8), mod 8
+// R7 : settings: start X angle offset (0-31, each being 11.25 degrees), mod 32
+// R6 : settings: address of/into known keys table
+// R5 : settings: address of/into key actions table
+// R4 : drawing: Y-increment value (for the clearing loop)
+
+// R3 : various temporary storage, loop end conditions, etc.
+// R3 : runner/move_pixel: pixel to be set (drawn or erased)
+// R3 : get_next_key: key loaded from table
+
+// R2 : various temporary storage, loop counters, etc.
+// R2 : loader: disk address of overlay to load, then loop counter
+// R2 : runner/draw_fill: start/end pixels, then loop counter
+// R2 : runner/move_pixel: pixel to be set (drawn or erased)
+// R2 : runner/load_immediate_r2: set to the value that was loaded from disk
+// R2 : runner/save_r1_to_r2: set to the value that was saved
+// R2 : get_next_key/load_r11_to_r2: set to the value that was loaded from disk
+// R2 : get_next_key: value loaded from disk (ends with call to load_r22_to_r2)
+
+// R1 : temporary storage, used by loader + runner, data read from disk/kbd
+
+// R0 : drawing: X/Y angular position stopping point
+
+OVERLAY overlay_loader_loader_with_modifications
+
+JMP 1 @local:loader_init // Jump to init code, to allow for general bootloaders
+one:        DATAC 1
+start_addr: DATAC @disk:overlay_loader_code_start:
+end_addr:   DATAC @disk:overlay_loader_code_end:
+loader_init: // memory address 4 : built-in bootloader's entry point
+MOVI 15 @local:one        // R15 = ram[..] : initialize register for math use
+MOVI 14 @local:movo       // R14 = ram[..] : load the save-to-RAM instruction
+MOVI 12 @local:runner_adr // R12 = ram[..] : Initialize the program counter
+MOVI 2 @local:start_addr  // R2 = ram[..]  : start address of loader code
+MOVI 3 @local:end_addr    // R3 = ram[..]  : end address of loader code
+loop:
+	GETDATA 1 3 2            // R1 = disk[R2] : read program data from disk
+	movo: MOVO 1 22          // ram[22] = R1  : save data to RAM; var. addr.
+	MATH 15 2 0              // R2++          : increment disk address
+	MATH 15 14 0             // R14++         : increment RAM address
+	MOVO 14 @local:movo      // ram[..] = R14 : update the saving instruction
+	IFJMP 2 @relative:loop 3 // jump back to loop if R2 < R3
+JMP 3 9                // run the overlay loader to load it
+runner_adr: DATAC @disk:runner_program_start: // Used to initialize R12
+
+END_OVERLAY
+
+overlay_loader_code_start: // Start of loader code that we will load into RAM.
+// This code avoids using @-references because it is not loaded at addr 0.
+GETDATA 1 3 2  // R1 = disk[R2] : read disk address of last instr. to load
+MATH 1 3 5     // R3 = R1       : set loop max register to that disk address
+PMOV 15 14 7 30 1 1 // R14[address] = 0 : initialize RAM address
+overlay_loader_loop:
+	MOVO 14 29    // ram[29] = R14 : update save-to-RAM instruction; loop start
+	MATH 15 14 0  // R14++         : increment RAM address
+	MATH 15 2 0   // R2++          : increment disk address
+	GETDATA 1 3 2 // R1 = disk[R2] : read program data from disk
+	MOVO 1 0      // ram[0] = R1   : save loaded data to RAM; self-modified
+	IFJMP 2 @relative:overlay_loader_loop: 3 // loop if R2<R3
+JMP 1 0        // start the loaded program
+overlay_loader_code_end: // End of loader code, and start of your main program
+
+
+OVERLAY runner
+
+JMP 1 @local:loop
+
+init_and_draw_fill:
+	MATH 3 3 1         // R3 = 0
+	PMOV 15 4 0 31 9 1 // R4 = 0b00_0000_001... : position increment for fill
+
+draw_fill:
+	PMOV  2 3 9 17 9 0 // R3[0:8] = R2[ 9:17]   : set end pixel
+	PMOV 15 2 8 30 1 1 // R2[9:31] = 0          : prepare start pixel
+	fill_loop:
+		SETDATA 0 3 2                 // Draw a pixel from R2
+		MATH 4 2 0                    // R2 += R4 : increment position
+		IFJMP 2 @relative:fill_loop 1 // repeat if R2 != R3
+	JMP 1 @local:loop
+
+NILLIST 2 // Alignment to push the runner to the end of the available space.
+
+move_pixel:
+	SETDATA 0 3 3
+	SETDATA 0 3 2
+	JMP 1 @local:loop
+
+load_immediate_r2:
+	GETDATA 1 3 12            // R1 = disk[R12] : read data from disk
+	MATH 15 12 0              // R12++          : increment program counter
+
+save_r1_to_r2:
+	MATH 1 2 5                // R2 = R1        : save the data for later use
+
+loop:
+	GETDATA 1 3 12            // R1 = disk[R12] : read next instruction
+	MATH 15 12 0              // R12++ : increment program counter
+	MOVO 1 @local:instruction // mem[..] = R1 : save instruction to RAM
+	instruction: NIL          // The user-program instruction to be executed
+JMP 1 @local:loop             // Loop back to do the next instruction
+
+
+OVERLAY get_next_key
+
+loop:
+	GETDATA 2 0 0 // R1 = keyboard[0] : get next pressed key, if any
+	MATH 1 2 5    // R2 = R1
+
+	PMOV 1 6 28 31 0 0 // R6[28:31] = R1[28:31] : address into known keys table
+	GETDATA 1 3 6      // R1 = disk[R6]         : load known key from the table
+	MATH 1 3 5         // R3 = R1
+
+	IFJMP 1 @local:loop 1 // If not the known key, go back and try again
+
+// Known key pressed, return to runner-based program
+
+PMOV 6 5 28 31 0 0 // R5[28:31] = R6[28:31] : address into key actions table
+GETDATA 1 3 5      // R1 = disk[R5]         : load address for current action
+MATH 1 12 5        // R12 = R1              : set next address to be run
+
+load_r11_to_r2:
+	GETDATA 1 3 11 // R1 = disk[R11] : read data from disk
+
+JMP 1 @local:save_r1_to_r2:runner
+
+SETDATA 0 3 3 // This is here to undo the overwriting done by draw_lissajous
+
+END_OVERLAY
+
+
+// Align the keys table to an address that is a multiple of its size.
+align_keys_lut: NILLIST ( ( 16 - @disk:align_keys_lut: % 16 ) % 16 )
+
+// Table of known keys used by the get_next_key routine to do quick matching.
+// NOTE: Do not reorder or change without changing the code accordingly.
+known_keys_table:
+	DATAC 0x01 // 0000 - no key; can be: ^@ ^P SP 0 @ P ` p
+	DATAC 0x61 // 0001 - "a"
+	DATAC 0x00 // 0010 - no key; can be: ^B ^R " 2 B R b r
+	DATAC 0x73 // 0011 - "s"
+	DATAC 0x64 // 0100 - "d"
+	DATAC 0x00 // 0101 - no key; can be: ^E ^U % 5 E U e u
+	DATAC 0x00 // 0110 - no key; can be: ^F ^V & 6 F V f v
+	DATAC 0x77 // 0111 - "w"
+	DATAC 0x00 // 1000 - no key; can be: BS ^X ( 8 H X h x
+	DATAC 0x69 // 1001 - "i"
+	DATAC 0x6A // 1010 - "j"
+	DATAC 0x6B // 1011 - "k"
+	DATAC 0x6C // 1100 - "l"
+	DATAC 0x0D // 1101 - enter (CR)
+	DATAC 0x00 // 1110 - no key; can be: ^N ^^ . > N ^ n ~
+	DATAC 0x00 // 1111 - no key; can be: ^O ^_ / ? O _ o ^?
+
+// Align the key actions table to an address that is a multiple of its size.
+align_key_actions: NILLIST ( ( 16 - @disk:align_key_actions: % 16 ) % 16 )
+
+// Table of which action is to be run for each entry in known_keys_table.
+// NOTE: The order in this table must match that of the known keys table.
+key_actions_table:
+	NIL                           // 0000
+	DATAC @disk:handle_key_wasd:  // 0001
+	NIL                           // 0010
+	DATAC @disk:handle_key_wasd:  // 0011
+	DATAC @disk:handle_key_wasd:  // 0100
+	NIL                           // 0101
+	NIL                           // 0110
+	DATAC @disk:handle_key_wasd:  // 0111
+	NIL                           // 1000
+	DATAC @disk:handle_key_ik:    // 1001
+	DATAC @disk:handle_key_jl:    // 1010
+	DATAC @disk:handle_key_ik:    // 1011
+	DATAC @disk:handle_key_jl:    // 1100
+	DATAC @disk:handle_key_enter: // 1101
+	NIL                           // 1110
+	NIL                           // 1111
+
+
+// Align the cosine table to an address that is a multiple of its size.
+align_cosine_table: NILLIST ( ( 32 - @disk:align_cosine_table: % 32 ) % 32 )
+
+// 32-entry table of -cos() values for radius 3.5 centered on 3.5 (values 0-7).
+// This was built using cos() on the entire 0 - 2*pi range, with rounding.
+cosine_table:
+	DATAC 0 // offset 0 : start here for -cos()
+	DATAC 0
+	DATAC 0
+	DATAC 1
+	DATAC 1
+	DATAC 2
+	DATAC 2
+	DATAC 3
+	DATAC 4 // offset 8 : start here for sin()
+	DATAC 4
+	DATAC 5
+	DATAC 5
+	DATAC 6
+	DATAC 6
+	DATAC 7
+	DATAC 7
+	DATAC 7 // offset 16 : start here for cos()
+	DATAC 7
+	DATAC 7
+	DATAC 6
+	DATAC 6
+	DATAC 5
+	DATAC 5
+	DATAC 4
+	DATAC 4 // offset 24 : start here for -sin()
+	DATAC 3
+	DATAC 2
+	DATAC 2
+	DATAC 1
+	DATAC 1
+	DATAC 0
+	DATAC 0
+
+
+// Align the WASD increments table to an address that is a multiple of its size
+align_wasd_incr_lut: NILLIST ( ( 4 - @disk:align_wasd_incr_lut: % 4 ) % 4 )
+
+// Table of increments to be applied to R7 for the wasd keys.
+// This is used to avoid having 4 duplicates of the same code.
+// NOTE: Do not reorder or change this without changing the code accordingly.
+wasd_increments_table:
+	DATAC -8 // 00 "a"
+	DATAC  1 // 01 "s"
+	DATAC  8 // 10 "d"
+	DATAC -1 // 11 "w"
+
+
+OVERLAY clear_lissajous_area
+
+PMOV 15 2 0 31 3 1   // R2 = 0b00_1000_000... : set start pixel
+PMOV 15 3 0 31 2 1   // R3 = 0b01_0000_000... : set end pixel
+clear_loop:
+	SETDATA 0 3 2               // Draw a pixel from R2
+	MATH 4 2 0                  // R2 += R4 : increment position
+	IFJMP 1 @local:clear_loop 1 // repeat if R2 != R3
+
+JMP 1 @local:loop:runner
+
+
+OVERLAY draw_lissajous
+
+PMOV 7 2 0 31 18 0 // R2 = R7 << (16 + 2) : start position
+MATH 0 3 5         // R3 = R0 : end position
+
+draw_loop:
+	PMOV 2 10  9 13 18 1 // R10[offset] = R2[X-offset]
+	GETDATA 1 3 10       // R1 = disk[R10] : read X value from table
+	PMOV 1 13 29 31  6 1 // R13[X-pos] = R1
+
+	PMOV 2 10 25 29  2 1 // R10[offset] = R2[Y-offset]
+	GETDATA 1 3 10       // R1 = disk[R10] : read Y value from table
+	PMOV 1 13 29 31  9 1 // R13[Y-pos] = R1[Y-pos]
+
+	SETDATA 0 3 13       // draw pixel
+
+	MATH 9 2 0           // R2 += R9 : update angular position (table offsets)
+
+	IFJMP 1 @local:draw_loop 1
+
+JMP 1 @local:loop:runner
+
+END_OVERLAY
+
+
+runner_program_start:
+
+
+JMP 1 @local:load_immediate_r2:runner
+	DATAC 0b_00_0000_000___00_0100_000... // Clear offset area
+JMP 1 @local:init_and_draw_fill:runner
+
+JMP 1 @local:load_immediate_r2:runner
+	DATAC 0b_10_0100_000___10_0101_000... // Separator offset / multipliers
+JMP 1 @local:draw_fill:runner
+
+JMP 1 @local:load_immediate_r2:runner
+	DATAC 0b_00_0101_000___00_0111_000... // Clear multipliers area
+JMP 1 @local:draw_fill:runner
+
+JMP 1 @local:load_immediate_r2:runner
+	DATAC 0b_10_0111_000___10_1000_000... // Separator multipliers / drawing
+JMP 1 @local:draw_fill:runner
+
+
+MATH 7 7 1
+SET 7 3 8  // R7 = 8 : initialize X angle offset
+
+MATH 8 8 1
+SET 8 3 2  // R8 = 2 : initialize X speed
+
+MATH 9 9 1 // R9 = 0 : initialize Y speed
+
+
+// Load address of known_keys_table into R6
+JMP 1 @local:load_immediate_r2:runner
+	DATAC @disk:known_keys_table:
+MATH 2 6 5
+
+// Load address of key_actions_table into R5
+JMP 1 @local:load_immediate_r2:runner
+	DATAC @disk:key_actions_table:
+MATH 2 5 5
+
+// Load address of cosine_table into R10
+JMP 1 @local:load_immediate_r2:runner
+	DATAC @disk:cosine_table:
+MATH 2 10 5
+
+// Prepare pixel data register for the Lissajous curve drawing
+MATH 13 13 1
+SET 13 0 0b01_1000_... // R13 = 0b01_1000_000... : pixel color and base pos.
+
+// Draw the initial positions of the settings
+
+PMOV 15 2  0 31 2 1 // R2 = 0b01_0000_000... : top-left for X angle offset
+PMOV  7 2 27 31 9 1 // R2[pos] = R7[value]
+SETDATA 0 3 2       // draw pixel from R2
+
+SET 2 0 0b01_0101... // R2 = 0b01_0101_000... : top for X speed
+PMOV 8 2 29 31 9 1   // R2[pos] = R8[value]   : insert pos for X speed
+SETDATA 0 3 2        // draw pixel from R2
+
+SET 2 0 0b01_0110... // R2 = 0b01_0110_...  : top for Y speed
+PMOV 9 2 29 31 9 1   // R2[pos] = R9[value] : insert pos for Y speed
+SETDATA 0 3 2        // draw pixel from R2
+
+
+// Load address of the wasd increments table
+JMP 1 @local:load_immediate_r2:runner
+	DATAC @disk:wasd_increments_table:
+MATH 2 11 5
+
+// Load and run the get_next_key overlay
+JMP 1 @local:load_immediate_r2:runner
+	DATAC @overlay:get_next_key
+JMP 3 9
+
+
+// Update X angle offset
+handle_key_wasd:
+	// When this is run, R3 contains the key that was pressed.
+
+	PMOV 3 11 29 30 1 1 // R11[30:31] = R3[29:30] : set wasd increment address
+	JMP 1 @local:load_r11_to_r2:get_next_key // R2 = disk[R11]
+
+	MATH 3 3 1          // R3 = 0
+	PMOV 7 3 27 31 9 1  // R3[pos] = R7[value] : set position
+
+	MATH 2 7 0          // R7 += R2 : add WASD increment to update position
+
+	PMOV 15 2  0 31 2 1 // R2 = 0b01_...       : set color of pixel
+	PMOV  7 2 27 31 9 1 // R2[pos] = R7[value] : set position
+
+	JMP 1 @local:move_pixel:runner
+	JMP 1 @local:loop:get_next_key
+
+
+// Handle X speed
+handle_key_jl:
+	// When this is run, R3 contains the key that was pressed.
+
+	PMOV 15 3 0 29 0 0   // R3[0:29] = 0 : clear all but last two bits
+	MATH 15 3 1          // R3--         : make it 1 for j and -1 for l
+
+	MATH 2 2 1           // R2 = 0
+	SET 2 0 0b00_0101... // R2 = 0b00_0101_...  : top for X speed
+	PMOV 8 2 29 31 9 1   // R2[pos] = R8[value] : set position
+
+	MATH 3 8 1           // R8 -= R3 : increment/decrement the position value
+
+	MATH 3 3 1           // R3 = 0
+	SET 3 0 0b01_0101... // R3 = 0b01_0101_...  : top for X speed
+	PMOV 8 3 29 31 9 1   // R3[pos] = R8[value] : set position
+
+	JMP 1 @local:move_pixel:runner
+	JMP 1 @local:loop:get_next_key
+
+
+// Handle Y speed
+handle_key_ik:
+	// When this is run, R3 contains the key that was pressed.
+
+	PMOV 3 11 30 31 0 0 // R11[30:31] = R3[30:31] : set wasd increment address
+	JMP 1 @local:load_r11_to_r2:get_next_key // R2 = disk[R11]
+
+	MATH 3 3 1           // R3 = 0
+	SET 3 0 0b00_0110... // R3 = 0b00_0110_...  : top for Y speed
+	PMOV 9 3 29 31 9 1   // R3[pos] = R9[value] : set position
+
+	MATH 2 9 1           // R9 -= R2 : update value according to the increment
+
+	MATH 2 2 1           // R2 = 0
+	SET 2 0 0b01_0110... // R2 = 0b01_0110...   : top for Y speed
+	PMOV  9 2 29 31 9 1  // R2[pos] = R9[value] : set position
+
+	JMP 1 @local:move_pixel:runner
+	JMP 1 @local:loop:get_next_key
+
+
+// Render the selected Lissajous curve
+handle_key_enter:
+
+// First, clear the area
+
+SETDATA 0 0 0b11_0100_000... // Show user that we're doing something
+
+JMP 1 @local:load_immediate_r2:runner
+	DATAC @overlay:clear_lissajous_area
+JMP 3 9
+
+
+// Then, draw the Lissajous figure
+
+SETDATA 0 0 0b11_0100_001... // Show user that we're still doing something
+
+// Set up angular speed register
+PMOV 15 9  0 28  0 0 // R9[0:28] = 0 : clear extra bits of Y speed
+PMOV 15 8  0 28  0 0 // R8[0:28] = 0 : clear extra bits of X speed
+MATH 15 9 0          // R9++ : increment Y speed to its addend value
+MATH 15 8 0          // R8++ : increment X speed to its addend value
+PMOV  8 9 28 31 16 0 // R9[12:15] = R8[28:31] : copy X speed into R9
+
+// Set up angular position register
+PMOV 15 7 0 26 0 0 // Clear out any extra bits from the initial X angle offset
+
+// Set R0 to end position = start position + speed * loop count
+PMOV  7 3 0 31 18 0 // R3 = R7 << (16 + 2) : start position
+PMOV 15 0 0 31  7 0 // R0 = 32 << 2        : loop count
+MATH  9 0 2         // R0 *= R9            : loop count * speed
+MATH  3 0 0         // R0 += R3            : loop count * speed + start pos.
+
+// Load and run the overlay
+JMP 1 @local:load_immediate_r2:runner
+	DATAC @overlay:draw_lissajous
+JMP 3 9
+
+
+// Then, reset things back to the settings state
+
+SETDATA 0 0 0b10_0100_000... // Show user that we're still doing something
+
+MATH 15 9 1          // R9-- : decrement Y speed to its settings value
+MATH 15 8 1          // R8-- : decrement X speed to its settings value
+
+// Load and run the appropriate overlay
+JMP 1 @local:load_immediate_r2:runner
+	DATAC @overlay:get_next_key
+
+SETDATA 0 0 0b10_0100_001... // Show user that we're (almost) done doing things
+
+JMP 3 9
