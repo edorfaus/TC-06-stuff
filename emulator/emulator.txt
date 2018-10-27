@@ -1,0 +1,467 @@
+// R15 = 1
+// R14 : Internal program counter (aka instruction pointer).
+// R13 : Emulated program counter (aka instruction pointer).
+// R12 : Address of/into instruction map.
+// R11 : Address of/into the emulated registers area.
+// R10 : Address of/into the emulated memory area.
+// R9  : Address of the emulated disk.
+
+// R7  : Return address for getdata/setdata handling.
+// R6  : Offset to add for disk operations (0 if not disk) in getdata/setdata
+// R5  : Value for getdata/setdata operations.
+
+// R4  : Loaded value from load_immediate_r4.
+// R4  : Target address for a matching IFJMP.
+
+// R3  : Temporary storage for implementing emulated instructions.
+// R2  : Temporary storage for implementing emulated instructions.
+
+// R1  : Overwritten before every instruction, saved to mem[1] after.
+
+// R0  : The emulated instruction to be executed.
+
+OVERLAY engine
+
+MOVI 15 @local:reg1               // Initialize R15.
+
+instr: MOVI 14 @local:program_start_addr // Initialize R14; custom instruction.
+JMP 1 @local:save
+
+reg1: DATAC 1 // Used to initialize R15, and to store R1 at runtime.
+
+JMP 1 0 // This is at RAM address 4 so the built-in bootloader works.
+
+program_start_addr: DATAC @disk:engine_init: // Used to initialize R14.
+
+outer_loop:
+	GETDATA 1 3 13           // R1 = disk[R13] : read next instruction.
+	MATH 15 13 0             // R13++ : increment program counter.
+	MATH 1 0 5               // R0 = R1 : keep instruction for later
+	PMOV 1 12 0 3 4 0        // R12[offset] = R1[opcode]
+	GETDATA 1 3 12           // R1 = disk[R12] : read function location
+	MATH 1 14 5              // R14 = R1 : jump to that location
+loop:
+	GETDATA 1 3 14           // R1 = disk[R14] : read next instruction.
+	MATH 15 14 0             // R14++ : increment instruction pointer.
+	MOVO 1 @local:loop_instr // mem[..] = R1 : save instruction to RAM.
+	loop_instr: NIL          // The user-program instruction to be executed.
+	save: MOVO 1 @local:reg1 // mem[..] = R1 : save R1 in case it is needed.
+JMP 1 @local:loop            // Loop back to do the next instruction.
+
+ifjmp:
+	MATH 4 14 5       // R14 = R4 : set instruction pointer.
+	JMP 1 @local:loop // Go back to the main loop to do the next instruction.
+
+load_immediate_r4:
+	GETDATA 1 3 14    // R1 = disk[R14] : read next value.
+	MATH 15 14 0      // R14++ : increment the instruction pointer.
+	MATH 1 4 5        // R4 = R1 : save the value that was read.
+	JMP 1 @local:loop // Go back to the main loop to do the next instruction.
+
+END_OVERLAY
+
+engine_init:
+
+// Initialize R13 (the emulated program counter).
+JMP 1 @local:load_immediate_r4:engine
+	DATAC @disk:emulated_memory:
+MATH 4 13 5
+
+// Initialize R12 (the instruction map address).
+JMP 1 @local:load_immediate_r4:engine
+	DATAC @disk:instruction_map:
+MATH 4 12 5
+
+// Initialize R11 (the address of the emulated registers area).
+JMP 1 @local:load_immediate_r4:engine
+	DATAC @disk:emulated_registers:
+MATH 4 11 5
+
+// Initialize R10 (the address of the emulated memory area).
+JMP 1 @local:load_immediate_r4:engine
+	DATAC @disk:emulated_memory:
+MATH 4 10 5
+
+// Initialize R9 (the address of the emulated disk).
+JMP 1 @local:load_immediate_r4:engine
+	DATAC @disk:emulated_disk:
+MATH 4 9 5
+
+// Start the emulation.
+JMP 1 @local:outer_loop:engine
+
+
+instruction_hlt:
+	MOVO 0 @local:instr:engine     // Save instruction to custom instr location
+	JMP 1 @local:instr:engine      // Run the instruction we saved
+
+	// Fall through to instruction_nil
+
+instruction_nil:
+	JMP 1 @local:outer_loop:engine // Go back to run the next one
+
+instruction_movi:
+	PMOV 0 11  4  7 24 1 // R11[offset] = R0[register] : addr into registers
+	PMOV 0 10 27 31  0 0 // R10[offset] = R0[address]  : addr into memory
+
+	GETDATA 1 3 10            // mem[reg1] = disk[R10] : load the wanted value
+	MOVI 2 @local:reg1:engine // R2 = mem[reg1]        : grab the loaded value
+	SETDATA 1 3 11 2          // disk[R11] = R2        : save the loaded value
+
+	JMP 1 @local:outer_loop:engine
+
+instruction_movo:
+	PMOV 0 11  4  7 24 1 // R11[offset] = R0[register] : addr into registers
+	PMOV 0 10 27 31  0 0 // R10[offset] = R0[address]  : addr into memory
+
+	GETDATA 1 3 11            // mem[reg1] = disk[R11] : load the wanted value
+	MOVI 2 @local:reg1:engine // R2 = mem[reg1]        : grab the loaded value
+	SETDATA 1 3 10 2          // disk[R10] = R2        : save the loaded value
+
+	JMP 1 @local:outer_loop:engine
+
+instruction_jmp:
+	MATH 3 3 1        // R3 = 0
+	PMOV 0 3 6 29 2 1 // R3 = R0[address]
+
+	MATH 15 13 1      // R13-- : prepare for relative jumps
+
+	// switch(flag) {...}
+	MATH 2 2 1        // R2 = 0
+	PMOV 0 2 4 5 7 0  // R2 = R0[flag] * 2
+	MATH 2 14 0       // R14 += R2 : jump forward by R2 instructions (0/2/4/6)
+
+	// case flag=0
+	MATH 3 13 0                    // R13 += R3 : emulated jump forward
+	JMP 1 @local:outer_loop:engine
+
+	// case flag=1
+	PMOV 3 13 27 31 0 0            // R13[offset] = R3[address] : emulated jump
+	JMP 1 @local:outer_loop:engine
+
+	// case flag=2
+	MATH 3 13 1                    // R13 -= R3 : emulated jump backward
+	JMP 1 @local:outer_loop:engine
+
+	// case flag=3
+	MATH 2 2 1          // R2 = 0
+	MATH 15 2 1         // R2 = -1  : R2[offset] = max_addr
+	MATH 3 2 1          // R2 -= R3 : R2[offset] = max_addr - R3
+	PMOV 2 13 27 31 0 0 // R13[offset] = R2[offset] : emulated jump
+	JMP 1 @local:outer_loop:engine
+
+instruction_setdata:
+	JMP 1 @local:load_immediate_r4:engine
+		DATAC @disk:setdata_after_arg:
+	MATH 4 7 5 // R7 = R4 : set return address for after handling the flag arg
+
+	JMP 1 @local:load_immediate_r4:engine
+		DATAC @disk:check_for_disk_and_jump_by_map:
+	MATH 4 14 5 // R14 = R4 : jump
+
+instruction_getdata:
+	JMP 1 @local:load_immediate_r4:engine
+		DATAC @disk:getdata_after_arg:
+	MATH 4 7 5 // R7 = R4 : set return address for after handling the flag arg
+
+	// Fall through to check_for_disk_and_jump_by_map
+
+check_for_disk_and_jump_by_map:
+	JMP 1 @local:load_immediate_r4:engine
+		DATAC @disk:getdata_flag_arg_handler_map:
+
+	PMOV 0 4 8 9 22 1         // R4[offset] = R0[flag]
+
+	GETDATA 1 3 4             // mem[reg1] = disk[R4] : load arg handler addr
+	MOVI 4 @local:reg1:engine // R4 = mem[reg1] : grab the loaded address
+
+	MATH 2 2 1        // R2 = 0
+	PMOV 0 2 4 7 24 1 // R2 = R0[port]
+	MATH 15 3 5       // R3 = 1
+
+	MATH 6 6 1        // R6 = 0 : don't add the address if not disk
+
+	IFJMP 1 @local:ifjmp:engine 1 // if R2 != R3, then jump to arg handler
+
+	MATH 9 6 5        // R6 = R9 : add the address of the emulated disk
+
+	MATH 4 14 5       // R14 = R4 : jump to arg handler
+
+setdata_after_arg:
+	JMP 1 @local:load_immediate_r4:engine
+		SETDATA 1 3 5
+
+	// Fall through to setdata_after_arg_extended
+
+setdata_after_arg_extended:
+	PMOV 0 4 4 7 0 0           // R4[port] = R0[port]
+	MOVO 4 @local:instr:engine // Save instruction to custom instr location
+
+	MATH 6 5 0 // R5 += R6 : add the address of the emulated disk if necessary
+
+	JMP 1 @local:instr:engine  // Run the instruction we saved
+
+	JMP 1 @local:outer_loop:engine
+
+getdata_after_arg:
+	MATH 6 5 0 // R5 += R6 : add the address of the emulated disk if necessary
+
+	JMP 1 @local:load_immediate_r4:engine
+		GETDATA 1 3 5
+	PMOV 0 4 4 7 0 0           // R4[port] = R0[port]
+	MOVO 4 @local:instr:engine // Save instruction to custom instr location
+	JMP 1 @local:instr:engine  // Run the instruction we saved
+
+	MOVI 2 @local:reg1:engine  // R2 = mem[reg1] : grab the result
+
+	PMOV 15 11 27 31 0 0       // R11[offset] = 1 : addr into regs for reg 1
+	SETDATA 1 3 11 2           // disk[R11] = R2  : save the result
+
+	JMP 1 @local:outer_loop:engine
+
+getdata_arg_constant:
+	MATH 5 5 1          // R5 = 0
+	PMOV 0 5 10 31 10 0 // R5 = R0[data] << 10
+
+	MATH 7 14 5         // Return to where we were called from
+
+getdata_arg_relative:
+	MATH 5 5 1          // R5 = 0
+	PMOV 0 5 11 31 0 0  // R5 = R0[address]
+
+	MATH 13 2 5         // R2 = R13 : current PC = next instr
+	MATH 15 2 1         // R2--     : current instruction
+
+	// switch(direction) {...}
+	MATH 3 3 1          // R3 = 0
+	PMOV 0 3 10 10 20 1 // R3 = R0[direction] * 2
+	MATH 3 14 0         // R14 += R3 : jump forward by R3 instructions
+
+	// case direction=0 : subtract address from PC
+	MATH 5 2 1          // R2 -= R5
+	MATH 15 14 0        // R14++ : skip next instruction
+
+	// case direction=1 : add address to PC
+	MATH 5 2 0          // R2 += R5
+
+	GETDATA 1 3 2       // mem[reg1] = disk[R2] : load data from that addr
+	MOVI 5 @local:reg1:engine // R5 = mem[reg1] : grab loaded data
+
+	MATH 7 14 5         // Return to where we were called from
+
+getdata_arg_absolute:
+	MATH 5 5 1          // R5 = 0
+	PMOV 0 5 11 31 0 0  // R5 = R0[address]
+
+	MATH 2 2 1          // R2 = 0
+	MATH 15 2 1         // R2 = -1
+
+	// switch(direction) {...}
+	MATH 3 3 1          // R3 = 0
+	PMOV 0 3 10 10 20 1 // R3 = R0[direction] * 2
+	MATH 3 14 0         // R14 += R3 : jump forward by R3 instructions
+
+	// case direction=0 : forward from 0
+	MATH 5 2 5          // R2 = R5
+	MATH 15 14 0        // R14++ : skip next instruction
+
+	// case direction=1 : backward from end of memory
+	MATH 5 2 1          // R2 -= R5
+
+	MATH 10 5 5         // R5 = R10
+	PMOV 2 5 27 31 0 0  // R5[offset] = R2[offset]
+
+	GETDATA 1 3 5       // mem[reg1] = disk[R5] : load data from that addr
+	MOVI 5 @local:reg1:engine // R5 = mem[reg1] : grab loaded data
+
+	MATH 7 14 5         // Return to where we were called from
+
+getdata_arg_register:
+	PMOV 0 11 10 13 18 1      // R11[offset] = R0[reg] : addr into regs
+	GETDATA 1 3 11            // mem[reg1] = disk[R11] : load the current value
+	MOVI 5 @local:reg1:engine // R5 = mem[reg1]        : grab the loaded value
+
+	// switch(is-extended-setdata) {...}
+	MATH 2 2 1                // R2 = 0
+	PMOV 0 2 14 14 17 1       // R2[31] = R0[extended]
+	PMOV 0 2  3  3 27 1       // R2[30] = R0[is-setdata]
+	MATH 2 14 0               // Jump forward by R2 instructions (0-3)
+
+	MATH 7 14 5               // case 0: getdata non-extended : return
+	MATH 7 14 5               // case 1: getdata extended?!   : return
+	MATH 7 14 5               // case 2: setdata non-extended : return
+	// case 3: it's an extended setdata; so handle it
+
+	PMOV 0 11 15 18 13 1      // R11[offset] = R0[reg] : addr into regs
+	GETDATA 1 3 11            // mem[reg1] = disk[R11] : load the current value
+	MOVI 2 @local:reg1:engine // R2 = mem[reg1]        : grab the loaded value
+
+	JMP 1 @local:load_immediate_r4:engine
+		DATAC @disk:setdata_after_arg_extended:
+	MATH 4 7 5
+
+	JMP 1 @local:load_immediate_r4:engine
+		SETDATA 1 3 5 2
+
+	MATH 7 14 5
+
+
+instruction_set:
+	PMOV 0 11 4 7 24 1         // R11[offset] = R0[register] : addr into regs
+
+	SET 0 0 0b0111_0010        // R0[register] = 2
+	MOVO 0 @local:instr:engine // Save instruction to custom instr location
+
+	GETDATA 1 3 11            // mem[reg1] = disk[R11] : load the current value
+	MOVI 2 @local:reg1:engine // R2 = mem[reg1]        : grab the loaded value
+
+	JMP 1 @local:instr:engine // Run the instruction we saved
+
+	SETDATA 1 3 11 2          // disk[R11] = R2        : save the new value
+
+	JMP 1 @local:outer_loop:engine
+
+instruction_ifjmp:
+	PMOV 15 11 27 31 0 0       // R11[offset] = 1 : addr into regs
+
+	MATH 15 11 0               // R11[offset] = 2 : addr into regs
+	GETDATA 1 3 11             // mem[reg1] = disk[R11] : load the first value
+	MOVI 2 @local:reg1:engine  // R2 = mem[reg1]        : grab the loaded value
+
+	MATH 15 11 0               // R11[offset] = 3 : addr into regs
+	GETDATA 1 3 11             // mem[reg1] = disk[R11] : load the second value
+	MOVI 3 @local:reg1:engine  // R3 = mem[reg1]        : grab the loaded value
+
+	JMP 1 @local:load_immediate_r4:engine
+		IFJMP 1 @local:ifjmp:engine 0
+	PMOV 0 4 30 31 0 0         // R4[operation] = R0[operation]
+	MOVO 4 @local:instr:engine // Save instruction to custom instr location
+
+	// Load the address we want to go to if the IFJMP operation is true
+	JMP 1 @local:load_immediate_r4:engine
+		DATAC @disk:instruction_jmp:
+
+	JMP 1 @local:instr:engine  // Run the instruction we saved (the IFJMP)
+
+	// The IFJMP operation was false, so continue with the next instruction
+
+	JMP 1 @local:outer_loop:engine
+
+instruction_pmov: // This has the exact same handling as MATH, so reuse it.
+instruction_math:
+	PMOV 0 11 4 7 24 1         // R11[offset] = R0[source-reg] : addr into regs
+	GETDATA 1 3 11             // mem[reg1] = disk[R11] : load the source value
+	MOVI 2 @local:reg1:engine  // R2 = mem[reg1]        : grab the loaded value
+
+	PMOV 0 11 8 11 20 1        // R11[offset] = R0[target-reg] : addr into regs
+	GETDATA 1 3 11             // mem[reg1] = disk[R11] : load the target value
+	MOVI 3 @local:reg1:engine  // R3 = mem[reg1]        : grab the loaded value
+
+	JMP 1 @local:load_immediate_r4:engine
+		MATH 2 3 0
+	PMOV 4 0 4 11 0 0          // R0[registers] = 2,3
+	MOVO 0 @local:instr:engine // Save instruction to custom instr location
+
+	JMP 1 @local:instr:engine  // Run the instruction we saved
+
+	SETDATA 1 3 11 3           // disk[R11] = R3        : save the new value
+
+	JMP 1 @local:outer_loop:engine
+
+unknown_instruction:
+	HLT
+
+
+// Align the flag arg handler map to an address that is a multiple of its size.
+align_flag_arg_map: NILLIST ( ( 4 - @disk:align_flag_arg_map: % 4 ) % 4 )
+
+getdata_flag_arg_handler_map:
+	DATAC @disk:getdata_arg_constant: // 00
+	DATAC @disk:getdata_arg_relative: // 01
+	DATAC @disk:getdata_arg_absolute: // 10
+	DATAC @disk:getdata_arg_register: // 11
+
+
+// Align the instruction map to an address that is a multiple of its size.
+align_instr_map: NILLIST ( ( 16 - @disk:align_instr_map: % 16 ) % 16 )
+
+// Map of instruction opcode to address of function that emulates it.
+instruction_map:
+	DATAC @disk:instruction_nil:     // 0000
+	DATAC @disk:instruction_hlt:     // 0001
+	DATAC @disk:instruction_movi:    // 0010
+	DATAC @disk:instruction_movo:    // 0011
+	DATAC @disk:instruction_jmp:     // 0100
+	DATAC @disk:instruction_setdata: // 0101
+	DATAC @disk:instruction_getdata: // 0110
+	DATAC @disk:instruction_set:     // 0111
+	DATAC @disk:instruction_ifjmp:   // 1000
+	DATAC @disk:instruction_pmov:    // 1001
+	DATAC @disk:instruction_math:    // 1010
+	DATAC @disk:unknown_instruction: // 1011
+	DATAC @disk:unknown_instruction: // 1100
+	DATAC @disk:unknown_instruction: // 1101
+	DATAC @disk:unknown_instruction: // 1110
+	DATAC @disk:unknown_instruction: // 1111
+
+
+// Align the memory area to an address that is a multiple of its size.
+align_emul_memory: NILLIST ( ( 32 - @disk:align_emul_memory: % 32 ) % 32 )
+// This area stores the main memory of the emulated computer.
+emulated_memory:
+	MATH 15 15 1  // R15 = 0
+	SET 15 3 1    // R15 = 1
+	MOVI 14 27    // R14 = mem[27] : load the instruction for saving to RAM
+	MATH 2 2 1    // R2 = 0
+	GETDATA 1 3 2 // R1 = disk[R2]
+	MATH 1 3 5    // R3 = R1
+	JMP 3 7       // go to start of loading loop
+	NILLIST 18
+	MATH 15 2 0   // R2++ : start of loading loop
+	GETDATA 1 3 2 // R1 = disk[R2]
+	MOVO 1 0      // ram[0] = R1   : save to RAM - note: address varies
+	MATH 15 14 0  // R14++         : increment target address
+	MOVO 14 27    // ram[27] = R14 : update the save-to-RAM instruction
+	IFJMP 2 5 3   // loop: jump 5 back if R2<R3
+	JMP 1 0       // start the loaded program
+
+// Align the registers area to an address that is a multiple of its size.
+align_emul_regs: NILLIST ( ( 16 - @disk:align_emul_regs: % 16 ) % 16 )
+// This area stores the registers of the emulated computer.
+emulated_registers:
+	NILLIST 16
+
+// This area stores the disk drive of the emulated computer.
+emulated_disk:
+
+DATAC ( @disk:app_end: - @disk:app_start: )
+
+app_start:
+SET 15 3 1 // R15=1 : for doing various math
+SET 12 1 10000000 // R12[8:8]=1 : 1-value for incrementing Y
+MOVI 10 26 // R10=ram[26] : this instruction is used as data
+MOVI 10 18 // R10=ram[18] : load the next word of image data : self-modified
+MATH 2 2 1 // R2=0 : initialize loop counter
+PMOV 15 3 0 31 4 0 // R3=16 : max value that ends the loop, pixels per word
+PMOV 10 9 0 1 0 0 // R9[0:1]=R10[0:1] : copy current color into R9
+SETDATA 0 3 9 // write(screen, R9) : write pixel to screen
+MATH 12 9 0 // R9+=R12 : increment Y position in R9 (overflows to X position)
+PMOV 10 10 0 31 2 0 // R10<<2 : move next pixel into place
+MATH 15 2 0 // R2++ : add one to the loop counter
+IFJMP 2 5 3 // loop: if R2 < R3 then jump back 5 instructions
+MOVI 2 3 // R2=ram[3] : load MOVI instruction at address 3 into R2
+MATH 15 2 0 // R2++ : increment address of MOVI instruction
+MOVO 2 3 // ram[3]=R2 : overwrite MOVI instruction at address 3
+MOVI 3 2 // R3=ram[2] : load instruction at address 2 into register 3
+IFJMP 1 3 3 // loop: if R2 < R3 then jump to instruction at address 3
+HLT // end of program - image is being displayed
+DATAC 11111111111111111101010110101011 // image data: 16x8 pixels, 2 bits
+DATAC 11101010010101111110100101101011 // per pixel (hence 8 words total),
+DATAC 11101010010101111101010110101011 // stored in column-first order
+DATAC 11101010101010111101010101010111 // (so two columns per word).
+DATAC 11101010101010111101010101010111
+DATAC 11100101101010111110101001011011
+DATAC 11010101010101111110101010101011
+DATAC 11010101011001111111111111111111
+app_end:
+
